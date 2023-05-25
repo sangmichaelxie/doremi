@@ -140,6 +140,16 @@ class DoReMiTrainer(Trainer):
         for k, v in kwargs.items():
            setattr(self, k, v)
 
+    def create_optimizer(self):
+        self.optimizer = super().create_optimizer()
+
+        optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
+        if optimizer_cls.__name__ == "Adafactor":
+            self.optimizer.beta1 = self.args.adam_beta1
+            for param_group in self.optimizer.param_groups:
+                param_group['beta1'] = self.args.adam_beta1
+        return self.optimizer
+
     def create_scheduler(self, num_training_steps, optimizer=None):
         """
         Setup the scheduler. The optimizer of the trainer must have been set up either before this method is called or
@@ -151,7 +161,8 @@ class DoReMiTrainer(Trainer):
         if self.lr_scheduler is None:
             if self.args.lr_scheduler_name is not None:
                 lr_scheduler_name = self.args.lr_scheduler_name
-            lr_scheduler_name = self.args.lr_scheduler_type
+            else:
+                lr_scheduler_name = self.args.lr_scheduler_type
             self.lr_scheduler = get_scheduler_extended(
                 lr_scheduler_name,
                 optimizer=self.optimizer if optimizer is None else optimizer,
