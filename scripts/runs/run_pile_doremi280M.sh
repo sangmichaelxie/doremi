@@ -4,7 +4,9 @@
 # Sample run of DoReMi 280M model
 #
 
-CACHE=/path/to/cache
+# load global parameters
+source constants.sh
+
 mkdir -p $CACHE
 export HF_HOME=$CACHE
 export TRANSFORMERS_CACHE=$CACHE
@@ -14,10 +16,10 @@ export TORCH_EXTENSIONS_DIR=$CACHE
 export TMPDIR=$CACHE
 
 
-PREPROCESSED_DATA=/path/to/preprocessed
-PREPROCESSED_CACHE=/path/to/cache/preprocessed
+PREPROCESSED_DATA=${PREPROCESSED_PILE_DIR}
+PREPROCESSED_CACHE=${CACHE}/preprocessed_cache/perdomain_pile_preprocessed
 
-if [ ! -d "${PREPROCESSED_DATA}" ]; then
+if [ ! -d "${PREPROCESSED_CACHE}" ]; then
     mkdir -p ${PREPROCESSED_CACHE}
     cp -r ${PREPROCESSED_DATA} ${PREPROCESSED_CACHE}
 fi
@@ -29,7 +31,7 @@ accelerate launch \
     --num_processes 8 \
     --num_machines 1 \
     --main_process_port 60600 \
-    data_reweighting/train.py \
+    doremi/train.py \
     --model_type gpt2 \
     --tokenizer_name gpt2 \
     --do_train \
@@ -66,6 +68,8 @@ accelerate launch \
     --reweight_eps 1e-4 \
     --reweight_domains \
     --remove_unused_columns=False \
-    --reference_model_name_or_path /path/to/model_output/pile_baseline_280M/checkpoint-200000 \
+    --reference_model_name_or_path ${MODEL_OUTPUT_DIR}/pile_baseline_280M/checkpoint-200000 \
+    --fsdp full_shard \
+    --bf16 \
     --overwrite_output_dir \
     --config_overrides="n_positions=1024,n_embd=1024,n_layer=18,n_head=16"

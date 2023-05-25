@@ -1,11 +1,9 @@
 # Sample code to run Pile data preprocessing on 1/3 of the Pile, keeping 00 held out
 
-PILE_PATH=/path/to/pile
-PREPROCESSED_OUTPUT_PATH=/path/to/preprocessed
-INTERMEDIATE_SCRATCH_PATH=/path/to/scratch
-CACHE=/path/to/cache
-PARTITION=partition
+# load global parameters
+source constants.sh
 
+INTERMEDIATE_SCRATCH_PATH=${CACHE}/pile_preprocessed_tmp
 
 SPLIT=train
 for PILE_DOMAIN in "ArXiv" "DM_Mathematics" "Enron_Emails" "EuroParl" "FreeLaw" "Github" "HackerNews" "NIH_ExPorter" "OpenSubtitles" "OpenWebText2" "PhilPapers" "Pile-CC" "PubMed_Abstracts" "PubMed_Central" "StackExchange" "USPTO_Backgrounds" "Wikipedia_(en)" "YoutubeSubtitles"; do
@@ -18,7 +16,7 @@ jid=$(sbatch \
         --mem 8G \
         -c 1 \
         --output ${LOGDIR}/${PILE_DOMAIN}_${SUBSET} \
-        scripts/run.sh "python scripts/filter_domains.py --pile_path_dir ${PILE_PATH} --output_dir ${PREPROCESSED_OUTPUT_PATH} --intermediate_dir ${INTERMEDIATE_SCRATCH_PATH} --cache_dir ${CACHE} --split ${SPLIT} --domain \"${PILE_DOMAIN}\" --num_samples 102400000 --tokenizer gpt2 --seed 111 --nproc 1 --subset ${SUBSET}")
+        scripts/run.sh "python scripts/filter_domains.py --pile_path_dir ${PILE_DIR} --output_dir ${PREPROCESSED_PILE_DIR} --intermediate_dir ${INTERMEDIATE_SCRATCH_PATH} --cache_dir ${CACHE} --split ${SPLIT} --domain \"${PILE_DOMAIN}\" --num_samples 102400000 --tokenizer gpt2 --seed 111 --nproc 1 --subset ${SUBSET}")
 echo -n "${jid} "
 done
 done
@@ -35,7 +33,7 @@ jid=$(sbatch \
         --mem 64G \
         -c 1 \
         --output ${LOGDIR}/${PILE_DOMAIN}_${SUBSET} \
-        scripts/run.sh "python scripts/filter_domains.py --pile_path_dir ${PILE_PATH} --output_dir ${PREPROCESSED_OUTPUT_PATH} --intermediate_dir ${INTERMEDIATE_SCRATCH_PATH} --cache_dir ${CACHE} --split ${SPLIT} --domain \"${PILE_DOMAIN}\" --num_samples 102400000 --tokenizer gpt2 --seed 111 --nproc 1 --subset ${SUBSET}")
+        scripts/run.sh "python scripts/filter_domains.py --pile_path_dir ${PILE_DIR} --output_dir ${PREPROCESSED_PILE_DIR} --intermediate_dir ${INTERMEDIATE_SCRATCH_PATH} --cache_dir ${CACHE} --split ${SPLIT} --domain \"${PILE_DOMAIN}\" --num_samples 102400000 --tokenizer gpt2 --seed 111 --nproc 1 --subset ${SUBSET}")
 echo -n "${jid} "
 done
 done
@@ -51,6 +49,6 @@ jid=$(sbatch \
         --mem 64G \
         -c 1 \
         --output ${LOGDIR}/${PILE_DOMAIN}_${SUBSET} \
-        scripts/run.sh "python scripts/filter_domains.py --pile_path_dir ${PILE_PATH} --output_dir ${PREPROCESSED_OUTPUT_PATH} --intermediate_dir ${INTERMEDIATE_SCRATCH_PATH} --cache_dir ${CACHE} --split ${SPLIT} --domain \"${PILE_DOMAIN}\" --num_samples 102400000 --tokenizer gpt2 --seed 111 --nproc 1 --subset ${SUBSET}")
+        scripts/run.sh "python scripts/filter_domains.py --pile_path_dir ${PILE_DIR} --output_dir ${PREPROCESSED_PILE_DIR} --intermediate_dir ${INTERMEDIATE_SCRATCH_PATH} --cache_dir ${CACHE} --split ${SPLIT} --domain \"${PILE_DOMAIN}\" --num_samples 102400000 --tokenizer gpt2 --seed 111 --nproc 1 --subset ${SUBSET}")
 echo -n "${jid} "
 done

@@ -8,7 +8,21 @@ git clone git@github.com:/sangmichaelxie/doremi
 pip install -e doremi
 ```
 
-All code should be run from the `doremi` directory. You'll need to edit the scripts below to run on your own paths to Pile data, cache directories, etc.
+All code should be run from the `doremi` directory.
+Before you start, write paths to your cache directories, data directories, etc in a `constants.sh` file in the outer directory of this repo. You can also place any conda or virtualenv activation commands here. Here's an example of the contents of a `constants.sh` file:
+```
+#!/bin/bash
+CACHE=/path/to/cache
+DOREMI_DIR=/path/to/this/repo
+PILE_DIR=/path/to/pile
+PREPROCESSED_PILE_DIR=/path/to/preprocessed  # will be created by scripts/run_filter_domains.sh
+MODEL_OUTPUT_DIR=/path/to/model_output_dir
+PARTITION=partition # for slurm
+mkdir -p ${CACHE}
+mkdir -p ${MODEL_OUTPUT_DIR}
+source ${DOREMI_DIR}/venv/bin/activate  # if you installed doremi in venv
+```
+
 Here is how to run the sample script for data preprocessing on The Pile, which separates the Pile data into domains and tokenizes it:
 ```
 bash scripts/run_filter_domains.sh
@@ -20,7 +34,6 @@ bash scripts/runs/run_pile_baseline280M.sh
 After training a baseline model, we can run DoReMi:
 ```
 bash scripts/runs/run_pile_doremi280M.sh
-
 ```
 
 If this was useful to you, please cite the [paper](https://arxiv.org/abs/2305.10429):
