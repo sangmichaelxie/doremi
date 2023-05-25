@@ -93,7 +93,7 @@ def main():
     def domain_id_fn(ex):
         return DOMAIN_TO_IDX[args.domain]
 
-    tokenizer = AutoTokenizer.from_pretrained('gpt2', use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, use_fast=True)
     tokenizer.pad_token = tokenizer.eos_token
     transform = pile_transform(tokenizer, args.max_length, seed=args.seed)
 
