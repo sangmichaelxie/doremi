@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# Sample baseline model run of a 280M model with the same number of non-embedding parameters as the 280M model in the DoReMi paper. Not the same as DoReMi paper since the paper uses 256k vocab size.
+# Sample baseline model run of a 120M model with the same number of non-embedding parameters as the 280M model in the DoReMi paper. Not the same as DoReMi paper since the paper uses 256k vocab size.
 #
 
 
@@ -24,7 +24,7 @@ if [ ! -d "${PREPROCESSED_CACHE}" ]; then
     cp -r ${PREPROCESSED_DATA} ${PREPROCESSED_CACHE}
 fi
 
-NAME=pile_baseline_280M
+NAME=pile_baseline_120M
 accelerate launch \
     --config_file accelerate_config.yml \
     --num_processes 8 \
@@ -67,5 +67,5 @@ accelerate launch \
     --fsdp full_shard \
     --bf16 \
     --overwrite_output_dir \
-    --config_overrides="max_position_embeddings=1024,hidden_size=1024,num_hidden_layers=18,num_attention_heads=16,intermediate_size=4096,vocab_size=50257"
+    --config_overrides="max_position_embeddings=1024,hidden_size=768,num_hidden_layers=12,num_attention_heads=12,intermediate_size=3072,vocab_size=50257"
 

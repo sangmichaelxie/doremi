@@ -25,15 +25,15 @@ class CausalLMOutputWithDomainIDs(CausalLMOutputWithCrossAttentions):
 class GPTNeoXAttentionFast(GPTNeoXAttention):
     def __init__(self, config):
         super().__init__(config)
-        self.dropout_prob = config.attn_pdrop
 
     def _attn(self, query, key, value, attention_mask=None, head_mask=None):
+        query = query.type(value.dtype)
+        key = key.type(value.dtype)
         out = xops.memory_efficient_attention(
                 query=query,
                 key=key,
                 value=value,
-                attn_bias=xops.LowerTriangularMask(),
-                p=self.dropout_prob)
+                attn_bias=xops.LowerTriangularMask())
         return out, None
 
 
