@@ -81,7 +81,6 @@ class GPTNeoXForCausalLMFast(GPTNeoXForCausalLM):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
@@ -97,7 +96,6 @@ class GPTNeoXForCausalLMFast(GPTNeoXForCausalLM):
             out = super().forward(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                position_ids=position_ids,
                 inputs_embeds=inputs_embeds,
                 head_mask=head_mask,
                 past_key_values=past_key_values,
@@ -121,7 +119,6 @@ class GPTNeoXForCausalLMFast(GPTNeoXForCausalLM):
             transformer_outputs = self.gpt_neox(
                 input_ids,
                 attention_mask=attention_mask,
-                position_ids=position_ids,
                 head_mask=head_mask,
                 inputs_embeds=inputs_embeds,
                 past_key_values=past_key_values,
@@ -159,7 +156,6 @@ class GPTNeoXForCausalLMFast(GPTNeoXForCausalLM):
                     reference_outputs = self.reference_model(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
-                        position_ids=position_ids,
                         inputs_embeds=inputs_embeds,
                         head_mask=head_mask,
                         past_key_values=past_key_values,
