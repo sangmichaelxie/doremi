@@ -62,7 +62,7 @@ from transformers.utils.versions import require_version
 
 import doremi.dataloader as data_utils
 from doremi.trainer import DoReMiTrainer
-from doremi.models import GPT2LMHeadModelFast
+from doremi.models import GPT2LMHeadModelFast, GPTNeoXForCausalLMFast
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -349,8 +349,9 @@ def main():
         )
     else:
         if model_args.model_type == 'gpt2':
-            # model = GPTLMHeadModelCompat(config)
             model = GPT2LMHeadModelFast(config)
+        elif model_args.model_type == 'gpt_neox':
+            model = GPTNeoXForCausalLMFast(config)
         else:
             model = AutoModelForCausalLM.from_config(config)
 
@@ -385,9 +386,9 @@ def main():
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
-    # embedding_size = model.get_input_embeddings.weight.shape[0]
-    # if len(tokenizer) > embedding_size:
-    #     model.resize_token_embeddings(len(tokenizer))
+    embedding_size = model.get_input_embeddings.weight.shape[0]
+    if len(tokenizer) > embedding_size:
+        model.resize_token_embeddings(len(tokenizer))
 
     with open(training_args.domain_config_path, 'r') as f:
         domain_config = json.load(f)
