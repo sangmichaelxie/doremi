@@ -1,5 +1,6 @@
 #!/bin/bash
-CACHE=/scr/eix/cache
+source constants.sh
+
 mkdir -p $CACHE
 export HF_HOME=$CACHE
 export TRANSFORMERS_CACHE=$CACHE
