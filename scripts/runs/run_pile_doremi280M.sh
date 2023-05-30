@@ -25,7 +25,7 @@ if [ ! -d "${PREPROCESSED_CACHE}" ]; then
     cp -r ${PREPROCESSED_DATA} ${PREPROCESSED_CACHE}
 fi
 
-NAME=pile_doremi_280M_50k
+NAME=pile_doremi_280M
 accelerate launch \
     --config_file accelerate_config.yml \
     --multi_gpu \
@@ -45,7 +45,7 @@ accelerate launch \
     --per_device_train_batch_size 32 \
     --gradient_accumulation_steps 2 \
     --dataloader_num_workers 2 \
-    --max_steps 50000 \
+    --max_steps 200000 \
     --evaluation_strategy no \
     --save_strategy steps \
     --save_steps 10000 \
@@ -71,7 +71,7 @@ accelerate launch \
     --train_domain_weights_tmp_file ${CACHE}/tmp_${NAME}_domain_weight \
     --reweight_domains \
     --remove_unused_columns=False \
-    --reference_model_name_or_path ${MODEL_OUTPUT_DIR}/pile_baseline_280M_50k/checkpoint-50000 \
+    --reference_model_name_or_path ${MODEL_OUTPUT_DIR}/pile_baseline_280M/checkpoint-200000 \
     --bf16 \
     --overwrite_output_dir \
     --config_overrides="max_position_embeddings=1024,hidden_size=1024,num_hidden_layers=18,num_attention_heads=16,intermediate_size=4096,vocab_size=50257"

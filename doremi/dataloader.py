@@ -20,8 +20,6 @@ from datasets.utils.logging import get_logger
 from datasets import load_from_disk
 import shutil
 
-from doremi.indexed_dataset import make_dataset
-
 logger = get_logger(__name__)
 
 

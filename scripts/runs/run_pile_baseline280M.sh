@@ -46,7 +46,7 @@ accelerate launch \
     --per_device_train_batch_size 32 \
     --gradient_accumulation_steps 2 \
     --dataloader_num_workers 1 \
-    --max_steps 50000 \
+    --max_steps 200000 \
     --evaluation_strategy no \
     --save_strategy steps \
     --save_steps 10000 \
