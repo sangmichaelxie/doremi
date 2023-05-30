@@ -7,6 +7,7 @@
 
 # load global parameters
 source constants.sh
+pip install -e .
 
 mkdir -p $CACHE
 export HF_HOME=$CACHE
@@ -15,6 +16,7 @@ export HF_DATASETS_CACHE=$CACHE
 export HF_DATASETS_IN_MEMORY_MAX_SIZE=0
 export TORCH_EXTENSIONS_DIR=$CACHE
 export TMPDIR=$CACHE
+export WANDB_DIR=${CACHE}/wandb
 
 PREPROCESSED_DATA=${PREPROCESSED_PILE_DIR}
 PREPROCESSED_CACHE=${CACHE}/preprocessed_cache/perdomain_pile_preprocessed
@@ -32,10 +34,10 @@ accelerate launch \
     --num_machines 1 \
     --main_process_port 60200 \
     doremi/train.py \
+    --dataset_name pile \
     --model_type gpt_neox \
     --tokenizer_name gpt2 \
     --do_train \
-    --do_eval \
     --cache_dir ${CACHE} \
     --dataset_dir ${PREPROCESSED_CACHE} \
     --domain_config_path configs/baseline.json \
@@ -44,7 +46,7 @@ accelerate launch \
     --per_device_train_batch_size 32 \
     --gradient_accumulation_steps 2 \
     --dataloader_num_workers 1 \
-    --max_steps 200000 \
+    --max_steps 50000 \
     --evaluation_strategy no \
     --save_strategy steps \
     --save_steps 10000 \
@@ -61,7 +63,7 @@ accelerate launch \
     --logging_steps 100 \
     --logging_first_step \
     --report_to wandb \
-    --optim adamw_bnb_8bit \
+    --optim adafactor \
     --adam_beta1 0.9 \
     --adam_beta2 0.99 \
     --fsdp full_shard \

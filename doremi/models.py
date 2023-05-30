@@ -139,7 +139,7 @@ class GPTNeoXForCausalLMFast(GPTNeoXForCausalLM):
                 labels = labels.to(lm_logits.device)
                 # Shift so that tokens < n predict n
                 shift_logits = lm_logits[:, :-1, :].contiguous()
-                labels = labels[:, 1:].contiguous()
+                shift_labels = labels[:, 1:].contiguous()
                 # Flatten the tokens
                 ignore_index = -100
                 loss_fct = nn.CrossEntropyLoss(reduction='none', ignore_index=ignore_index)

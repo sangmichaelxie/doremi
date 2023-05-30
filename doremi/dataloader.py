@@ -2,12 +2,14 @@ from pathlib import Path
 import pickle
 from copy import deepcopy
 from multiprocessing import Array
-from itertools import cycle
+from itertools import cycle, chain
+from functools import partial
 import uuid
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Sampler
 from datasets import load_dataset, Dataset, IterableDataset
+from datasets.info import DatasetInfo
 from datasets.iterable_dataset import ExamplesIterable, RandomlyCyclingMultiSourcesExamplesIterable
 from transformers import AutoTokenizer, default_data_collator
 import torch.distributed as dist
@@ -18,15 +20,10 @@ from datasets.utils.logging import get_logger
 from datasets import load_from_disk
 import shutil
 
+from doremi.indexed_dataset import make_dataset
+
 logger = get_logger(__name__)
 
-
-PILE_DOMAINS = ['ArXiv', 'BookCorpus2', 'Books3', 'DM Mathematics', 'Enron Emails', 'EuroParl', 'FreeLaw', 'Github', 'Gutenberg (PG-19)', 'HackerNews', 'NIH ExPorter', 'OpenSubtitles', 'OpenWebText2', 'PhilPapers', 'Pile-CC', 'PubMed Abstracts', 'PubMed Central', 'StackExchange', 'USPTO Backgrounds', 'Ubuntu IRC', 'Wikipedia (en)', 'YoutubeSubtitles']
-
-DOMAIN_TO_IDX = {
-    name: idx for idx, name in enumerate(PILE_DOMAINS)}
-
-PILE_SUBSETS = [f'0{i}' if i < 10 else str(i) for i in range(0, 30)]
 
 
 class UpdatableRandomlyCyclingMultiSourcesExamplesIterable(
@@ -111,53 +108,21 @@ def get_dataset(pile_dir, domain_ids_dir, cache_dir=None, split='train'):
     return ds_ls, domain_ids
 
 
-def pile_transform(tokenizer, max_length, seed=None):
-    def transform(batch, domain_id):
-        def calculate_chunk_starts(tokens):
-            num_chunks = max(1, len(tokens) // max_length)
-            return np.arange(0, len(tokens), len(tokens) // num_chunks)
-
-        # tokenize
-        inputs = tokenizer(batch['text'])
-        # chunk them and add domain id
-        total_length = len(inputs['input_ids'])
-        if total_length >= max_length:
-            total_length = (total_length // max_length) * max_length
-            return [{**{k: v[i:i+max_length] for k, v in inputs.items()}, **{'domain_ids': domain_id}}
-                      for i in range(0, total_length, max_length)]
-        else:
-            for k, v in inputs.items():
-                if k == 'input_ids':
-                    inputs[k] = v + [tokenizer.pad_token_id] * (max_length - total_length)
-                else:
-                    inputs[k] = v + [0] * (max_length - total_length)
-            return [{**inputs, **{'domain_ids': domain_id}}]
-
-    return transform
-
-
-def get_preprocessed_mixed_dataset(preprocessed_dir, domain_weights_dict, cache_dir=None, split='train', sharded=True, seed=None, filter_domains_fn=None, max_samples=None, tmp_file=None):
-    '''preprocessed_dir: has the following format
-               first level: domain directories
-               second level: shards for each domain. number of shards per domain should be the same.
-
-       domain_weights_dict: dict from domain name to weight
-    '''
-
+def get_pile_sharded_datasets(
+        preprocessed_dir,
+        cache_dir=None,
+        split='train',
+        sharded=True,
+        filter_domains_fn=None,
+        ):
     preprocessed_dir = Path(preprocessed_dir)
-    cached_preprocessed_dir = Path(cache_dir) / 'preprocessed_cache' / preprocessed_dir.name
-    cached_preprocessed_dir.parent.mkdir(parents=True, exist_ok=True)
-
-    if not cached_preprocessed_dir.exists():
-        print("Copying preprocessed files to cache")
-        shutil.copytree(str(preprocessed_dir), str(cached_preprocessed_dir))
 
     def iterdir_with_filter(dir_path):
         for f in dir_path.iterdir():
             if filter_domains_fn is None or filter_domains_fn(f):
                 yield f
 
-    preprocessed_dir = cached_preprocessed_dir / split
+    preprocessed_dir = preprocessed_dir / split
     first_domain_dir = list(preprocessed_dir.iterdir())[0]
     if sharded:
         num_shards = len(list(iterdir_with_filter(first_domain_dir)))
@@ -173,8 +138,66 @@ def get_preprocessed_mixed_dataset(preprocessed_dir, domain_weights_dict, cache_
                 all_ds_shards[shard_idx][domain_dir.name] = ds
         else:
             all_ds_shards[0][domain_dir.name] = load_from_disk(dataset_path=str(domain_dir))
+    return all_ds_shards
+
+
+def get_rp_sharded_datasets(
+        preprocessed_dir,
+        cache_dir=None):
+    preprocessed_dir = Path(preprocessed_dir)
+    num_shards = 1
+
+    def data_gen(shards):
+        for shard in shards:
+            for ex in shard:
+                yield ex
+
+    all_ds_shards = [{} for _ in range(num_shards)]
+    for domain_dir in preprocessed_dir.iterdir():
+        curr_shards = []
+        for shard_dir in domain_dir.iterdir():
+            print(f"Loading {shard_dir}")
+            curr_shards.append(load_from_disk(dataset_path=str(shard_dir)))
+        ds = IterableDataset.from_generator(data_gen, gen_kwargs={'shards': curr_shards})
+        all_ds_shards[0][domain_dir.name] = ds
+    return all_ds_shards
+
+
+def get_preprocessed_mixed_dataset(
+        preprocessed_dir,
+        domain_weights_dict,
+        dataset_name='pile',
+        cache_dir=None,
+        split='train',
+        sharded=True,
+        seed=None,
+        filter_domains_fn=None,
+        max_samples=None,
+        add_domain_id=False,
+        tmp_file=None):
+    '''preprocessed_dir: has the following format
+               first level: domain directories
+               second level: shards for each domain. number of shards per domain should be the same.
+
+       domain_weights_dict: dict from domain name to weight
+    '''
+
+    if dataset_name == 'pile':
+        all_ds_shards = get_pile_sharded_datasets(
+                preprocessed_dir,
+                cache_dir=cache_dir,
+                split=split,
+                sharded=sharded,
+                filter_domains_fn=filter_domains_fn)
+    elif dataset_name == 'redpajama':
+        all_ds_shards = get_rp_sharded_datasets(
+                preprocessed_dir,
+                cache_dir=cache_dir)
+    else:
+        raise ValueError(f"dataset_name {dataset_name} not implemented.")
 
     domain_names = list(sorted(domain_weights_dict.keys()))
+    domain_to_idx = {domain_names[i]: i for i in range(len(domain_names))}
     domain_weights = np.asarray([domain_weights_dict[domain_name] for domain_name in domain_names])
     domain_weights = domain_weights / domain_weights.sum()
 
@@ -188,15 +211,28 @@ def get_preprocessed_mixed_dataset(preprocessed_dir, domain_weights_dict, cache_
         probabilities = domain_weights
         probabilities_tmp_file = None
 
+    def add_domain_id_fn(example, domain_idx):
+        if 'domain_id' not in example:
+            example['domain_id'] = domain_idx
+        return example
+
     per_domain_ds_shards = []
     for domain_ds_dict in all_ds_shards:
-        domain_ds_ls = [domain_ds_dict[domain_name] for domain_name in domain_names]
+        domain_ds_ls = []
+        for domain_name in domain_names:
+            domain_idx = domain_to_idx[domain_name]
+            domain_ds = domain_ds_dict[domain_name]
+            # add domain_id if necessary
+            if add_domain_id:
+                domain_ds = domain_ds.map(partial(add_domain_id_fn, domain_idx=domain_idx))
+            domain_ds_ls.append(domain_ds)
         mixed_ds_shard = interleave_datasets(
                 domain_ds_ls,
                 probabilities=probabilities,
                 probabilities_file=probabilities_tmp_file,
                 seed=seed)
         per_domain_ds_shards.append(mixed_ds_shard)
+
 
     def data_generator(shards, max_samples=None):
         idx = 0
@@ -210,12 +246,15 @@ def get_preprocessed_mixed_dataset(preprocessed_dir, domain_weights_dict, cache_
     return IterableDataset.from_generator(data_generator, gen_kwargs={'shards': per_domain_ds_shards, 'max_samples': max_samples})
 
 
-def get_data_collator(tokenizer, return_tensors='pt'):
+def get_data_collator(tokenizer, return_tensors='pt', do_padding=False):
     def data_collator(features):
-        batch = {
-                k: torch.tensor([f[k] for f in features])
-                for k in features[0].keys()
-                }
+        if not do_padding:
+            batch = {
+                    k: torch.tensor([f[k] for f in features])
+                    for k in features[0].keys()
+                    }
+        else:
+            batch = tokenizer.pad(features, return_tensors=return_tensors, pad_to_multiple_of=tokenizer.model_max_length)
         batch['attention_mask'] = batch['attention_mask'].long()
         batch['input_ids'] = batch['input_ids'].long()
 
@@ -234,6 +273,13 @@ def get_data_collator(tokenizer, return_tensors='pt'):
 
 if __name__ == "__main__":
     # a short test
+
+    PILE_DOMAINS = ['ArXiv', 'BookCorpus2', 'Books3', 'DM Mathematics', 'Enron Emails', 'EuroParl', 'FreeLaw', 'Github', 'Gutenberg (PG-19)', 'HackerNews', 'NIH ExPorter', 'OpenSubtitles', 'OpenWebText2', 'PhilPapers', 'Pile-CC', 'PubMed Abstracts', 'PubMed Central', 'StackExchange', 'USPTO Backgrounds', 'Ubuntu IRC', 'Wikipedia (en)', 'YoutubeSubtitles']
+
+    DOMAIN_TO_IDX = {
+        name: idx for idx, name in enumerate(PILE_DOMAINS)}
+
+    PILE_SUBSETS = [f'0{i}' if i < 10 else str(i) for i in range(0, 30)]
 
     domain_weights_dict = {domain: 1 for domain in PILE_DOMAINS}
     ds, domain_weights = get_preprocessed_mixed_dataset(

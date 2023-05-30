@@ -15,6 +15,7 @@ export HF_DATASETS_CACHE=$CACHE
 export HF_DATASETS_IN_MEMORY_MAX_SIZE=0
 export TORCH_EXTENSIONS_DIR=$CACHE
 export TMPDIR=$CACHE
+export WANDB_DIR=${CACHE}/wandb
 
 PREPROCESSED_DATA=${PREPROCESSED_PILE_DIR}
 PREPROCESSED_CACHE=${CACHE}/preprocessed_cache/perdomain_pile_preprocessed
@@ -32,6 +33,7 @@ accelerate launch \
     --num_machines 1 \
     --main_process_port 60200 \
     doremi/train.py \
+    --dataset_name pile \
     --model_type gpt_neox \
     --tokenizer_name gpt2 \
     --do_train \
@@ -61,7 +63,7 @@ accelerate launch \
     --logging_steps 100 \
     --logging_first_step \
     --report_to wandb \
-    --optim adamw_bnb_8bit \
+    --optim adafactor \
     --adam_beta1 0.9 \
     --adam_beta2 0.99 \
     --fsdp full_shard \

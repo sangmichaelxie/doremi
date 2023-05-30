@@ -124,6 +124,20 @@ def main():
             "train_domain_weights": domain_weights,
             "eval_domain_weights": domain_weights,
             }
+    elif args.config_name == 'rp_baseline':
+        domain_weights = {
+                'common_crawl': 0.7316,
+                'c4': 0.1458,
+                'github': 0.0492,
+                'wikipedia': 0.02,
+                'book': 0.0216,
+                'arxiv': 0.0233,
+                'stackexchange': 0.016,
+        }
+        config = {
+            "train_domain_weights": domain_weights,
+            "eval_domain_weights": domain_weights,
+            }
     else:
         raise ValueError(f"Unknown config name {args.config_name}")
 

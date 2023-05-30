@@ -1,6 +1,9 @@
+import os
+import uuid
 import math
 import warnings
 import json
+import pickle
 import wandb
 import numpy as np
 import torch
@@ -132,9 +135,23 @@ class DoReMiTrainer(Trainer):
             if self.args.doremi_optimizer == 'doremiv1':
                 # initial domain weights
                 self.train_domain_weights = torch.tensor(train_domain_weights)
+                if self.is_local_process_zero():
+                    self.write_weights(self.train_domain_weights)
                 self.perdomain_scores = torch.ones(len(self.train_domain_weights_dict)) * np.log(len(self.tokenizer))
             else:
                 raise ValueError(f"DoReMi optimizer {self.args.doremi_optimizer} not supported")
+
+    def write_weights(self, weights):
+        tmp_tmp_file = self.args.train_domain_weights_tmp_file + f'_{uuid.uuid4()}'
+        with open(tmp_tmp_file, 'wb') as f:
+            pickle.dump(weights, f)
+        os.rename(tmp_tmp_file, self.args.train_domain_weights_tmp_file)
+
+    def read_weights(self):
+        with open(self.args.train_domain_weights_tmp_file, 'rb') as f:
+            weights = torch.tensor(pickle.load(f))
+        return weights
+
 
     def set_attributes(self, **kwargs):
         for k, v in kwargs.items():
@@ -218,6 +235,8 @@ class DoReMiTrainer(Trainer):
             return loss
 
     def update_domain_weights(self, scores, scores_mask, domain_ids):
+        self.train_domain_weights = self.read_weights()
+
         scores = scores.detach()
         domain_ids = domain_ids.detach()
 
@@ -226,7 +245,6 @@ class DoReMiTrainer(Trainer):
             for domain_id in range(len(self.train_domain_weights)):
                 domain_mask = (domain_ids == domain_id)
                 perdomain_scores_mask = scores_mask[domain_mask]
-                # print type of perdomain_scores_mask
                 if domain_mask.sum() > 0:
                     curr_domain_scores = torch.clip(scores[domain_mask][perdomain_scores_mask], min=0).mean()
                 else:
@@ -235,11 +253,8 @@ class DoReMiTrainer(Trainer):
             self.perdomain_scores = torch.tensor(perdomain_scores)
             log_new_train_domain_weights = torch.log(self.train_domain_weights) + self.args.reweight_eta * self.perdomain_scores
             new_train_domain_weights = nn.functional.softmax(log_new_train_domain_weights, dim=0)
-            # make sure it sums to 1
-            new_train_domain_weights = new_train_domain_weights / new_train_domain_weights.sum()
-            new_train_domain_weights = (1-self.args.reweight_eps) * new_train_domain_weights + self.args.reweight_eps / len(new_train_domain_weights)
-
-            self.train_domain_weights = new_train_domain_weights
+            self.train_domain_weights = (1-self.args.reweight_eps) * new_train_domain_weights + self.args.reweight_eps / len(new_train_domain_weights)
+            self.write_weights(self.train_domain_weights)
         else:
             raise ValueError(f"DoReMi optimizer {self.args.doremi_optimizer} not supported")
 
@@ -329,12 +344,17 @@ class DoReMiTrainer(Trainer):
             with self.compute_loss_context_manager():
                 loss = self.compute_loss(model, inputs)
 
-        if self.args.reweight_domains and self.args.doremi_optimizer == 'doremiv1':
-            # compute the rescaled loss, divide by domain weights
-            train_domain_weights_gpu = self.train_domain_weights.to(pertoken_loss.device)
-            curr_domain_weights = train_domain_weights_gpu[inputs['domain_ids']].unsqueeze(-1).expand_as(pertoken_loss).detach()
-            token_mask = token_mask.detach().type(pertoken_loss.dtype)
-            loss = (pertoken_loss * curr_domain_weights * token_mask).sum() / (curr_domain_weights * token_mask).sum()
+        if self.args.reweight_domains:
+            if self.args.doremi_optimizer == 'doremiv1':
+                # compute the rescaled loss, divide by domain weights
+                self.train_domain_weights = self.read_weights()
+                train_domain_weights_gpu = self.train_domain_weights.to(pertoken_loss.device)
+                curr_domain_weights = train_domain_weights_gpu[inputs['domain_ids']].unsqueeze(-1).expand_as(pertoken_loss).detach()
+                token_mask = token_mask.detach().type(pertoken_loss.dtype)
+                curr_domain_weights = curr_domain_weights * token_mask
+                loss = (pertoken_loss * curr_domain_weights).sum() /  curr_domain_weights.sum()
+            else:
+                raise ValueError(f"doremi_optimizer {self.args.doremi_optimizer} is not supported")
 
         if self.args.n_gpu > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training

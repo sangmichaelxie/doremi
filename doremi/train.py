@@ -158,6 +158,9 @@ class DataTrainingArguments:
     dataset_dir: str = field(
         default='.', metadata={"help": "Path to the dataset directory."}
     )
+    dataset_name: str = field(
+        default='pile', metadata={"help": "Name of the dataset."}
+    )
     max_train_samples: Optional[int] = field(
         default=None,
         metadata={
@@ -197,6 +200,12 @@ class DataTrainingArguments:
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
+    do_padding: bool = field(
+        default=False, metadata={"help": "Pad the inputs."}
+    )
+    add_domain_id: bool = field(
+        default=False, metadata={"help": "Add domain id to examples (when it's not already in the data)."}
+    )
     preprocessing_num_workers: Optional[int] = field(
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing."},
@@ -205,7 +214,6 @@ class DataTrainingArguments:
 
 @dataclass
 class FullTrainingArguments(TrainingArguments):
-    # add a lr_end argument
     domain_config_path: str = field(
         default='.', metadata={"help": "Path to the domain config file."}
             )
@@ -232,6 +240,9 @@ class FullTrainingArguments(TrainingArguments):
     )
     lr_scheduler_name: str = field(
         default=None, metadata={"help": "Custom LR scheduler name (linear_warmup_exponential, linear_warmup_cosine)"}
+    )
+    train_domain_weights_tmp_file: str = field(
+        default=None, metadata={"help": "Path to the temporary file for training domain weights."}
     )
 
 
@@ -329,7 +340,7 @@ def main():
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
-    if model_args.tokenizer_name == 'gpt2':
+    if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     if model_args.model_name_or_path:
@@ -365,7 +376,14 @@ def main():
             if model_args.torch_dtype in ["auto", None]
             else getattr(torch, model_args.torch_dtype)
         )
-        reference_model = GPT2LMHeadModelFast.from_pretrained(
+        if model_args.model_type == 'gpt2':
+            model_cls = GPT2LMHeadModelFast
+        elif model_args.model_type == 'gpt_neox':
+            model_cls = GPTNeoXForCausalLMFast
+        else:
+            model_cls = AutoModelForCausalLM
+            
+        reference_model = model_cls.from_pretrained(
             training_args.reference_model_name_or_path,
             from_tf=bool(".ckpt" in training_args.reference_model_name_or_path),
             config=config,
@@ -403,21 +421,24 @@ def main():
         train_dataset = data_utils.get_preprocessed_mixed_dataset(
                 preprocessed_dir=data_args.dataset_dir,
                 domain_weights_dict=train_domain_weights_dict,
+                dataset_name=data_args.dataset_name,
                 cache_dir=model_args.cache_dir,
                 split='train',
                 sharded=True,
                 filter_domains_fn=lambda f: f.name != '00',
                 max_samples=data_args.max_train_samples,
+                add_domain_id=data_args.add_domain_id,
                 tmp_file=None)
-
 
     if training_args.do_eval:
         eval_dataset = data_utils.get_preprocessed_mixed_dataset(
                 preprocessed_dir=data_args.dataset_dir,
                 domain_weights_dict=eval_domain_weights_dict,
+                dataset_name=data_args.dataset_name,
                 cache_dir=model_args.cache_dir,
                 split='validation',
                 sharded=False,
+                add_domain_id=data_args.add_domain_id,
                 max_samples=data_args.max_eval_samples)
 
         def preprocess_logits_for_metrics(logits, labels):
@@ -456,7 +477,7 @@ def main():
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
-        data_collator=data_utils.get_data_collator(tokenizer),
+        data_collator=data_utils.get_data_collator(tokenizer, do_padding=data_args.do_padding),
         compute_metrics=compute_metrics if training_args.do_eval and not is_torch_tpu_available() else None,
         preprocess_logits_for_metrics=preprocess_logits_for_metrics
         if training_args.do_eval and not is_torch_tpu_available()
