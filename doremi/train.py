@@ -496,9 +496,17 @@ def main():
 
         metrics = train_result.metrics
 
-        for i in range(len(trainer.avg_train_domain_weights)):
-            domain_name = domain_list[i]
-            metrics[f'avg_domain_weight:{domain_name}'] = trainer.avg_train_domain_weights[i].item()
+        if training_args.reweight_domains:
+            avg_domain_weights_dict = {}
+            for i in range(len(trainer.avg_train_domain_weights)):
+                domain_name = domain_list[i]
+                metrics[f'avg_domain_weight:{domain_name}'] = trainer.avg_train_domain_weights[i].item()
+                avg_domain_weights_dict[domain_name] = trainer.avg_train_domain_weights[i].item()
+
+            # save avg domain weights to json
+            avg_domain_weights_file = Path(training_args.output_dir) / 'avg_domain_weights.json'
+            with open(avg_domain_weights_file, 'w') as f:
+                json.dump(avg_domain_weights_dict, f, indent=2)
 
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)

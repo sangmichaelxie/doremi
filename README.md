@@ -1,14 +1,19 @@
 # DoReMi: Domain Reweighting with Minimax Optimization
 
-PyTorch reference implementation of DoReMi, a method for optimizing data mixtures for language modeling datasets. This repo is currently in active development!
+PyTorch reference implementation of DoReMi, a method for optimizing data mixtures for language modeling datasets. Check out the [paper](https://arxiv.org/abs/2305.10429) for more details. This repo is currently in active development!
+
+Note that there may be a few differences between this repo and the paper, namely:
+- PyTorch vs JAX
+- Subtle differences in model architecture
+- Tokenizers used (256k vocab size used in paper, while standard GPT2 tokenizer is 50k vocab size). This can siginificantly affect the data mixtures as calculated by token count.
 
 To get started, please clone the repo, and install it:
 ```
-git clone git@github.com:/sangmichaelxie/doremi
+git clone git@github.com:/sangmichaelxie/doremi.git
 pip install -e doremi
 ```
 
-All code should be run from the `doremi` directory.
+All code should be run from the outermost `doremi` directory.
 Before you start, write paths to your cache directories, data directories, etc in a `constants.sh` file in the outer directory of this repo. You can also place any conda or virtualenv activation commands here. Here's an example of the contents of a `constants.sh` file:
 ```
 #!/bin/bash

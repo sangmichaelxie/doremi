@@ -2,7 +2,7 @@
 
 source constants.sh
 
-python scripts/write_config.py --config_name baseline --preprocessed_dir /path/to/pile/data --cache_dir /path/to/cache
-python scripts/write_config.py --config_name uniform
-python scripts/write_config.py --config_name doremi_280M
+python scripts/write_config.py --config_name pile_baseline --preprocessed_dir ${PREPROCESSED_PILE_DIR} --cache_dir ${CACHE}
+python scripts/write_config.py --config_name pile_uniform
+python scripts/write_config.py --config_name doremi_280M_256kvocab
 

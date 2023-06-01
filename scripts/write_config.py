@@ -83,19 +83,48 @@ def main():
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / f"{args.config_name}.json"
 
-    if args.config_name == 'baseline':
+    if args.config_name == 'pile_baseline_50kvocab':
         domain_weights = compute_pile_baseline_weights(args.preprocessed_dir, args.cache_dir)
         config = {
             "train_domain_weights": domain_weights,
             "eval_domain_weights": domain_weights,
             }
-    elif args.config_name == 'uniform':
+    elif args.config_name == 'pile_uniform':
         domain_weights = {d: 1 / len(PILE_DOMAINS) for d in PILE_DOMAINS}
         config = {
             "train_domain_weights": domain_weights,
             "eval_domain_weights": domain_weights,
             }
-    elif args.config_name == 'doremi_280M':
+    elif args.config_name == 'pile_baseline_256kvocab':
+        domain_weights = {
+                "OpenWebText2": 0.1247,
+                "USPTO Backgrounds": 0.0420,
+                "NIH ExPorter": 0.0052,
+                "Wikipedia (en)": 0.0919,
+                "YoutubeSubtitles": 0.0042,
+                "Books3": 0.0676,
+                "HackerNews": 0.0075,
+                "StackExchange": 0.0929,
+                "Enron Emails": 0.0030,
+                "FreeLaw": 0.0386,
+                "DM Mathematics": 0.0198,
+                "PubMed Central": 0.1071,
+                "OpenSubtitles": 0.0124,
+                "BookCorpus2": 0.0044,
+                "Ubuntu IRC": 0.0074,
+                "PhilPapers": 0.0027,
+                "PubMed Abstracts": 0.0845,
+                "EuroParl": 0.0043,
+                "Github": 0.0427,
+                "Gutenberg (PG-19)": 0.0199,
+                "Pile-CC": 0.1121,
+                "ArXiv": 0.1052
+                }
+        config = {
+            "train_domain_weights": domain_weights,
+            "eval_domain_weights": domain_weights,
+            }
+    elif args.config_name == 'pile_doremi_280M_256kvocab':
         domain_weights = {
                 'Pile-CC': 0.6057,
                 'PubMed Central': 0.0046,

@@ -1,0 +1,2 @@
+{"train_domain_weights": {"common_crawl": 0.1428, "c4": 0.1428, "github": 0.1428, "wikipedia": 0.1428, "book": 0.1428, "arxiv": 0.1428, "stackexchange": 0.1428}, "eval_domain_weights": {"common_crawl": 0.1428, "c4": 0.1428, "github": 0.1428, "wikipedia": 0.1428, "book": 0.1428, "arxiv": 0.1428, "stackexchange": 0.1428}}
+

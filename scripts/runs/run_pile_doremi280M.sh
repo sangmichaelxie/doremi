@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# Sample run of DoReMi 280M model with same number of total params as 280M model in DoReMi paper
+# Sample run of DoReMi 280M model with same number of total params as 280M model in DoReMi paper. Results may differ due to differences in vocab size (50k vs 256k) and architecture.
 #
 
 # load global parameters
@@ -39,7 +39,7 @@ accelerate launch \
     --do_train \
     --cache_dir ${CACHE} \
     --dataset_dir ${PREPROCESSED_CACHE} \
-    --domain_config_path configs/uniform.json \
+    --domain_config_path configs/pile_uniform.json \
     --output_dir ${MODEL_OUTPUT_DIR}/${NAME} \
     --max_token_length 1024 \
     --per_device_train_batch_size 32 \
