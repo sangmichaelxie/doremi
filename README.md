@@ -40,6 +40,7 @@ After training a baseline model, we can run DoReMi:
 ```
 bash scripts/runs/run_pile_doremi280M.sh
 ```
+These scripts run for 200k steps, following the paper, but we also provide more lightweight run scripts for 50k steps, which often gives similar results.
 
 If this was useful to you, please cite the [paper](https://arxiv.org/abs/2305.10429):
 ```
