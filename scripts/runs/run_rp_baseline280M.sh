@@ -68,6 +68,5 @@ accelerate launch \
     --adam_beta2 0.99 \
     --fsdp full_shard \
     --bf16 \
-    --overwrite_output_dir \
     --config_overrides="max_position_embeddings=2048,hidden_size=1024,num_hidden_layers=18,num_attention_heads=16,intermediate_size=4096"
 

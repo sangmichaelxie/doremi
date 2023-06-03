@@ -26,6 +26,7 @@ https://huggingface.co/models?filter=text-generation
 
 import logging
 import math
+from pathlib import Path
 import os
 import sys
 from dataclasses import dataclass, field
@@ -369,6 +370,14 @@ def main():
         n_params = sum({p.data_ptr(): p.numel() for p in model.parameters()}.values())
         logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
 
+    with open(training_args.domain_config_path, 'r') as f:
+        domain_config = json.load(f)
+
+    train_domain_weights_dict = domain_config['train_domain_weights']
+    eval_domain_weights_dict = domain_config['eval_domain_weights']
+    # whenever we convert dict to array, we sort by key
+    domain_list = list(sorted(train_domain_weights_dict.keys()))
+    num_domains = len(domain_list)
 
     if training_args.reweight_domains:
         torch_dtype = (
@@ -396,6 +405,12 @@ def main():
             param.requires_grad = False
         reference_model.eval()
         model.reference_model = reference_model
+        model.register_buffer('train_domain_weights', torch.tensor(
+                [train_domain_weights_dict[domain] for domain in domain_list]))
+        model.register_buffer('avg_domain_weights', model.train_domain_weights.clone())
+        model.register_buffer('perdomain_scores', torch.ones(len(train_domain_weights_dict)) * np.log(len(tokenizer)))
+        model.register_buffer('update_counter', torch.tensor(1))
+
     else:
         reference_model = None
 
@@ -408,14 +423,6 @@ def main():
     # if len(tokenizer) > embedding_size:
     #     model.resize_token_embeddings(len(tokenizer))
 
-    with open(training_args.domain_config_path, 'r') as f:
-        domain_config = json.load(f)
-
-    train_domain_weights_dict = domain_config['train_domain_weights']
-    eval_domain_weights_dict = domain_config['eval_domain_weights']
-    # whenever we convert dict to array, we sort by key
-    domain_list = list(sorted(train_domain_weights_dict.keys()))
-    num_domains = len(domain_list)
 
     if training_args.do_train:
         train_dataset = data_utils.get_preprocessed_mixed_dataset(
@@ -498,10 +505,10 @@ def main():
 
         if training_args.reweight_domains:
             avg_domain_weights_dict = {}
-            for i in range(len(trainer.avg_train_domain_weights)):
+            for i in range(len(model.avg_train_domain_weights)):
                 domain_name = domain_list[i]
-                metrics[f'avg_domain_weight:{domain_name}'] = trainer.avg_train_domain_weights[i].item()
-                avg_domain_weights_dict[domain_name] = trainer.avg_train_domain_weights[i].item()
+                metrics[f'avg_domain_weight:{domain_name}'] = model.avg_train_domain_weights[i].item()
+                avg_domain_weights_dict[domain_name] = model.avg_train_domain_weights[i].item()
 
             # save avg domain weights to json
             avg_domain_weights_file = Path(training_args.output_dir) / 'avg_domain_weights.json'

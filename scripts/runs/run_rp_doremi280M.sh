@@ -74,5 +74,4 @@ accelerate launch \
     --remove_unused_columns=False \
     --reference_model_name_or_path ${MODEL_OUTPUT_DIR}/rp_baseline_280M/checkpoint-200000 \
     --bf16 \
-    --overwrite_output_dir \
     --config_overrides="max_position_embeddings=2048,hidden_size=1024,num_hidden_layers=18,num_attention_heads=16,intermediate_size=4096"
