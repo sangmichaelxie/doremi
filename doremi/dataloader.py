@@ -111,19 +111,11 @@ def get_pile_sharded_datasets(
         cache_dir=None,
         split='train',
         sharded=True,
-        filter_domains_fn=None,
         ):
-    preprocessed_dir = Path(preprocessed_dir)
-
-    def iterdir_with_filter(dir_path):
-        for f in dir_path.iterdir():
-            if filter_domains_fn is None or filter_domains_fn(f):
-                yield f
-
-    preprocessed_dir = preprocessed_dir / split
+    preprocessed_dir = Path(preprocessed_dir) / split
     first_domain_dir = list(preprocessed_dir.iterdir())[0]
     if sharded:
-        num_shards = len(list(iterdir_with_filter(first_domain_dir)))
+        num_shards = len(list(first_domain_dir.iterdir()))
     else:
         num_shards = 1
 
@@ -131,7 +123,7 @@ def get_pile_sharded_datasets(
     for domain_dir in preprocessed_dir.iterdir():
         domain_shard_ds_ls = []
         if sharded:
-            for shard_idx, shard_dir in enumerate(iterdir_with_filter(domain_dir)):
+            for shard_idx, shard_dir in enumerate(domain_dir.iterdir()):
                 ds = load_from_disk(dataset_path=str(shard_dir))
                 all_ds_shards[shard_idx][domain_dir.name] = ds
         else:
@@ -169,7 +161,6 @@ def get_preprocessed_mixed_dataset(
         split='train',
         sharded=True,
         seed=None,
-        filter_domains_fn=None,
         max_samples=None,
         add_domain_id=False,
         tmp_file=None):
@@ -185,8 +176,7 @@ def get_preprocessed_mixed_dataset(
                 preprocessed_dir,
                 cache_dir=cache_dir,
                 split=split,
-                sharded=sharded,
-                filter_domains_fn=filter_domains_fn)
+                sharded=sharded)
     elif dataset_name == 'redpajama':
         all_ds_shards = get_rp_sharded_datasets(
                 preprocessed_dir,
@@ -285,8 +275,7 @@ if __name__ == "__main__":
             domain_weights_dict=domain_weights_dict,
             cache_dir='/path/to/cache',
             split='train',
-            sharded=True,
-            filter_domains_fn=lambda f: f.name != '00')
+            sharded=True)
 
     tokenizer = AutoTokenizer.from_pretrained('gpt2', use_fast=True)
     tokenizer.pad_token = tokenizer.eos_token

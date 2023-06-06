@@ -1,4 +1,4 @@
-# Sample code to run Pile data preprocessing on 1/3 of the Pile, keeping 00 held out
+# Sample commands to run Pile data preprocessing
 
 # load global parameters
 source constants.sh
@@ -7,7 +7,7 @@ INTERMEDIATE_SCRATCH_PATH=${CACHE}/pile_preprocessed_tmp
 
 SPLIT=train
 for PILE_DOMAIN in "ArXiv" "DM_Mathematics" "Enron_Emails" "EuroParl" "FreeLaw" "Github" "HackerNews" "NIH_ExPorter" "OpenSubtitles" "OpenWebText2" "PhilPapers" "Pile-CC" "PubMed_Abstracts" "PubMed_Central" "StackExchange" "USPTO_Backgrounds" "Wikipedia_(en)" "YoutubeSubtitles"; do
-for SUBSET in 00 01 02 03 04 05 06 07 08 09 10; do
+for SUBSET in 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29; do
 LOGDIR=logs/filter_domain_logs/${SPLIT}
 mkdir -p ${LOGDIR}
 jid=$(sbatch \
@@ -24,7 +24,7 @@ done
 
 SPLIT=train
 for PILE_DOMAIN in "BookCorpus2" "Books3" "Gutenberg_(PG-19)" "Ubuntu_IRC" ; do
-for SUBSET in 00 01 02 03 04 05 06 07 08 09 10; do
+for SUBSET in 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29; do
 LOGDIR=logs/filter_domain_logs/${SPLIT}
 mkdir -p ${LOGDIR}
 jid=$(sbatch \

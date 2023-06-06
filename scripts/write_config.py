@@ -11,14 +11,6 @@ PILE_DOMAINS = ['ArXiv', 'BookCorpus2', 'Books3', 'DM Mathematics', 'Enron Email
 
 def compute_pile_baseline_weights(preprocessed_dir, cache_dir):
 
-    def filter_domains_fn(f):
-        return f.name != '00'
-
-    def iterdir_with_filter(dir_path):
-        for f in dir_path.iterdir():
-            if filter_domains_fn is None or filter_domains_fn(f):
-                yield f
-
     preprocessed_dir = Path(preprocessed_dir)
     cached_preprocessed_dir = Path(cache_dir) / 'preprocessed_cache' / preprocessed_dir.name
     cached_preprocessed_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -30,13 +22,13 @@ def compute_pile_baseline_weights(preprocessed_dir, cache_dir):
     preprocessed_dir = cached_preprocessed_dir / 'train'
 
     first_domain_dir = list(preprocessed_dir.iterdir())[0]
-    num_shards = len(list(iterdir_with_filter(first_domain_dir)))
+    num_shards = len(list(first_domain_dir.iterdir()))
 
     domain_lens = defaultdict(int)
     for domain_dir in preprocessed_dir.iterdir():
         print("Counting domain", domain_dir.name)
         domain_shard_ds_ls = []
-        for shard_idx, shard_dir in enumerate(iterdir_with_filter(domain_dir)):
+        for shard_idx, shard_dir in enumerate(domain_dir.iterdir()):
             ds = load_from_disk(dataset_path=str(shard_dir))
             domain_lens[domain_dir.name] += len(ds)
     # multiply by epochs to get weights according to effective sizes

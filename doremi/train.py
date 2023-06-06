@@ -432,7 +432,6 @@ def main():
                 cache_dir=model_args.cache_dir,
                 split='train',
                 sharded=True,
-                filter_domains_fn=None,
                 max_samples=data_args.max_train_samples,
                 add_domain_id=data_args.add_domain_id,
                 tmp_file=None)
