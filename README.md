@@ -1,11 +1,16 @@
-# DoReMi: Domain Reweighting with Minimax Optimization
+# DoReMi🎶: Domain Reweighting with Minimax Optimization
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![arXiv](https://img.shields.io/badge/arXiv-2305.10429-00ff00.svg)](https://arxiv.org/abs/2305.10429)
 
-PyTorch reference implementation of DoReMi, a method for optimizing data mixtures for language modeling datasets. Check out the [paper](https://arxiv.org/abs/2305.10429) for more details. This repo is currently in active development!
+PyTorch implementation of DoReMi, an algorithm for optimizing data mixtures for language modeling datasets. Check out the [paper](https://arxiv.org/abs/2305.10429) for more details. This repo is currently in active development!
 
-Note that there may be a few differences between this repo and the paper, namely:
+![High-level overview of DoReMi.](doremi.gif)
+
+Note that there may be a few differences between this repo and the paper, which was developed at Google, namely:
 - PyTorch vs JAX
 - Subtle differences in model architecture
 - Tokenizers used (256k vocab size used in paper, while standard GPT2 tokenizer is 50k vocab size). This can siginificantly affect the data mixtures as calculated by token count.
+You should run DoReMi within your own specific training setup for the best results.
 
 To get started, please clone the repo, and install it:
 ```
