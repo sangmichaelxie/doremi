@@ -26,6 +26,7 @@ if [ ! -d "${PREPROCESSED_CACHE}" ]; then
     cp -r ${PREPROCESSED_DATA} ${PREPROCESSED_CACHE}
 fi
 
+
 NAME=pile_baseline_280M_debug
 accelerate launch \
     --config_file accelerate_config.yml \
