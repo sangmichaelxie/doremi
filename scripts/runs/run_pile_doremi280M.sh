@@ -34,7 +34,7 @@ accelerate launch \
     --main_process_port 60600 \
     doremi/train.py \
     --dataset_name pile \
-    --model_type gpt_neox \
+    --model_type gpt_flash \
     --tokenizer_name gpt2 \
     --do_train \
     --cache_dir ${CACHE} \
@@ -42,9 +42,9 @@ accelerate launch \
     --domain_config_path configs/pile_uniform.json \
     --output_dir ${MODEL_OUTPUT_DIR}/${NAME} \
     --max_token_length 1024 \
-    --per_device_train_batch_size 32 \
-    --gradient_accumulation_steps 2 \
-    --dataloader_num_workers 2 \
+    --per_device_train_batch_size 64 \
+    --gradient_accumulation_steps 1 \
+    --dataloader_num_workers 1 \
     --max_steps 200000 \
     --evaluation_strategy no \
     --save_strategy steps \

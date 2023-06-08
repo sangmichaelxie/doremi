@@ -60,10 +60,11 @@ from transformers.testing_utils import CaptureLogger
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
+from transformers.models.gpt2.configuration_gpt2 import GPT2Config
 
 import doremi.dataloader as data_utils
 from doremi.trainer import DoReMiTrainer
-from doremi.models import GPT2LMHeadModelFast, GPTNeoXForCausalLMFast
+import doremi.models as doremi_models
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -319,7 +320,17 @@ def main():
     elif model_args.model_name_or_path:
         config = AutoConfig.from_pretrained(model_args.model_name_or_path, **config_kwargs)
     else:
-        config = CONFIG_MAPPING[model_args.model_type]()
+        if model_args.model_type == 'gpt_flash': 
+            config = GPT2Config(
+                    vocab_size=50257, n_positions=2048, n_embd=2048,
+                    n_layer=24, n_head=16, 
+                    scale_attn_by_inverse_layer_idx=True, 
+                    rotary_emb_fraction=0.5,
+                    use_flash_attn=True, fused_mlp=True,
+                    fused_bias_fc=True, fused_dropout_add_ln=True, 
+                    pad_vocab_size_multiple=8)
+        else:
+            config = CONFIG_MAPPING[model_args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
         if model_args.config_overrides is not None:
             logger.info(f"Overriding config: {model_args.config_overrides}")
@@ -361,9 +372,11 @@ def main():
         )
     else:
         if model_args.model_type == 'gpt2':
-            model = GPT2LMHeadModelFast(config)
+            model = doremi_models.GPT2LMHeadModelFast(config)
         elif model_args.model_type == 'gpt_neox':
-            model = GPTNeoXForCausalLMFast(config)
+            model = doremi_models.GPTNeoXForCausalLMFast(config)
+        elif model_args.model_type == 'gpt_flash':
+            model = doremi_models.GPTFlashAttnLMHeadModel(config)
         else:
             model = AutoModelForCausalLM.from_config(config)
 
@@ -386,9 +399,11 @@ def main():
             else getattr(torch, model_args.torch_dtype)
         )
         if model_args.model_type == 'gpt2':
-            model_cls = GPT2LMHeadModelFast
+            model_cls = doremi_models.GPT2LMHeadModelFast
         elif model_args.model_type == 'gpt_neox':
-            model_cls = GPTNeoXForCausalLMFast
+            model_cls = doremi_models.GPTNeoXForCausalLMFast
+        elif model_args.model_type == 'gpt_flash':
+            model_cls = doremi_models.GPTFlashAttnLMHeadModel
         else:
             model_cls = AutoModelForCausalLM
             

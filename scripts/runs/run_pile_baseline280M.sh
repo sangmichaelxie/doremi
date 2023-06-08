@@ -26,7 +26,7 @@ if [ ! -d "${PREPROCESSED_CACHE}" ]; then
     cp -r ${PREPROCESSED_DATA} ${PREPROCESSED_CACHE}
 fi
 
-NAME=pile_baseline_280M
+NAME=pile_baseline_280M_debug
 accelerate launch \
     --config_file accelerate_config.yml \
     --num_processes 8 \
@@ -35,7 +35,7 @@ accelerate launch \
     --main_process_port 60200 \
     doremi/train.py \
     --dataset_name pile \
-    --model_type gpt_neox \
+    --model_type gpt_flash \
     --tokenizer_name gpt2 \
     --do_train \
     --cache_dir ${CACHE} \
@@ -43,8 +43,8 @@ accelerate launch \
     --domain_config_path configs/pile_baseline_50kvocab.json \
     --output_dir ${MODEL_OUTPUT_DIR}/${NAME} \
     --max_token_length 1024 \
-    --per_device_train_batch_size 32 \
-    --gradient_accumulation_steps 2 \
+    --per_device_train_batch_size 64 \
+    --gradient_accumulation_steps 1 \
     --dataloader_num_workers 1 \
     --max_steps 200000 \
     --evaluation_strategy no \
@@ -66,7 +66,5 @@ accelerate launch \
     --optim adafactor \
     --adam_beta1 0.9 \
     --adam_beta2 0.99 \
-    --fsdp full_shard \
     --bf16 \
-    --config_overrides="max_position_embeddings=1024,hidden_size=1024,num_hidden_layers=18,num_attention_heads=16,intermediate_size=4096,vocab_size=50257"
-
+    --config_overrides="n_positions=1024,n_embd=1024,n_layer=18,n_head=16"

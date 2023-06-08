@@ -164,3 +164,4 @@ wandb/
 logs/
 *__pycache__/
 constants.sh
+flash-attention
