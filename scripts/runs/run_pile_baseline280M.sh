@@ -27,7 +27,7 @@ if [ ! -d "${PREPROCESSED_CACHE}" ]; then
 fi
 
 
-NAME=pile_baseline_280M_debug
+NAME=pile_baseline_280M
 accelerate launch \
     --config_file accelerate_config.yml \
     --num_processes 8 \
