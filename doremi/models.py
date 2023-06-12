@@ -35,6 +35,7 @@ class GPTFlashAttnLMHeadModel(GPTLMHeadModelFlash):
         self.ignore_index = -100
         self.loss_fct = CrossEntropyLoss(reduction='mean', ignore_index=self.ignore_index)
         self.pertoken_loss_fct = CrossEntropyLoss(reduction='none', ignore_index=self.ignore_index)
+        self.reference_model = None
 
     def forward(
         self,
@@ -147,7 +148,8 @@ class GPTFlashAttnLMHeadModel(GPTLMHeadModelFlash):
         elif model_name.startswith('EleutherAI/gpt-neox-') or model_name.startswith('EleutherAI/pythia-'):
             state_dict = remap_state_dict_hf_gpt_neox(state_dict, config)
         else:
-            raise NotImplementedError(f'Model {model_name} not supported')
+            pass
+
         if world_size > 1:
             state_dict = shard_state_dict_tp(state_dict, config, world_size, rank)
         load_return = model.load_state_dict(state_dict, strict=strict)
