@@ -131,8 +131,9 @@ def get_pile_sharded_datasets(
     return all_ds_shards
 
 
-def get_rp_sharded_datasets(
+def get_perdomain_sharded_datasets(
         preprocessed_dir,
+        domain_weights_dict,
         cache_dir=None):
     preprocessed_dir = Path(preprocessed_dir)
     num_shards = 1
@@ -142,14 +143,23 @@ def get_rp_sharded_datasets(
             for ex in shard:
                 yield ex
 
+    domains = list(sorted(domain_weights_dict.keys()))
+
     all_ds_shards = [{} for _ in range(num_shards)]
-    for domain_dir in preprocessed_dir.iterdir():
-        curr_shards = []
-        for shard_dir in domain_dir.iterdir():
-            print(f"Loading {shard_dir}")
-            curr_shards.append(load_from_disk(dataset_path=str(shard_dir)))
-        ds = IterableDataset.from_generator(data_gen, gen_kwargs={'shards': curr_shards})
-        all_ds_shards[0][domain_dir.name] = ds
+    for domain in domains:
+        domain_dir = preprocessed_dir / domain
+
+        if (domain_dir / 'dataset_info.json').exists():
+            print(f"Loading {domain_dir}")
+            ds = load_from_disk(dataset_path=str(domain_dir))
+            print(f"Length of {domain_dir}: {len(ds)}")
+        else:
+            curr_shards = []
+            for shard_dir in domain_dir.iterdir():
+                print(f"Loading {shard_dir}")
+                curr_shards.append(load_from_disk(dataset_path=str(shard_dir)))
+            ds = IterableDataset.from_generator(data_gen, gen_kwargs={'shards': curr_shards})
+        all_ds_shards[0][domain] = ds
     return all_ds_shards
 
 
@@ -163,7 +173,8 @@ def get_preprocessed_mixed_dataset(
         seed=None,
         max_samples=None,
         add_domain_id=False,
-        tmp_file=None):
+        tmp_file=None,
+        tokenizer=None):
     '''preprocessed_dir: has the following format
                first level: domain directories
                second level: shards for each domain. number of shards per domain should be the same.
@@ -177,12 +188,18 @@ def get_preprocessed_mixed_dataset(
                 cache_dir=cache_dir,
                 split=split,
                 sharded=sharded)
-    elif dataset_name == 'redpajama':
-        all_ds_shards = get_rp_sharded_datasets(
-                preprocessed_dir,
-                cache_dir=cache_dir)
     else:
-        raise ValueError(f"dataset_name {dataset_name} not implemented.")
+        try:
+            all_ds_shards = get_perdomain_sharded_datasets(
+                preprocessed_dir, domain_weights_dict, cache_dir=cache_dir)
+        except Exception:
+            raise ValueError(f"dataset_name {dataset_name} not implemented.")
+
+    if dataset_name == 'lawinstruct_english':
+        tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     domain_names = list(sorted(domain_weights_dict.keys()))
     domain_to_idx = {domain_names[i]: i for i in range(len(domain_names))}
@@ -247,10 +264,13 @@ def get_data_collator(tokenizer, return_tensors='pt', do_padding=False):
         batch['input_ids'] = batch['input_ids'].long()
 
         batch.pop("special_tokens_mask", None)
-        labels = batch['input_ids'].clone()
+        if 'labels' not in batch:
+            labels = batch['input_ids'].clone()
+            batch["labels"] = labels
+
         if tokenizer.pad_token_id is not None:
-            labels[labels == tokenizer.pad_token_id] = -100
-        batch["labels"] = labels
+            batch['labels'][batch['labels'] == tokenizer.pad_token_id] = -100
+
         if 'domain_ids' not in batch and 'domain_id' in batch:
             batch['domain_ids'] = batch['domain_id']  # compat
             batch.pop('domain_id')
