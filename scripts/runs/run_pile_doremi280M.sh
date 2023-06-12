@@ -73,4 +73,4 @@ accelerate launch \
     --remove_unused_columns=False \
     --reference_model_name_or_path ${MODEL_OUTPUT_DIR}/pile_baseline_280M/checkpoint-200000 \
     --bf16 \
-    --config_overrides="max_position_embeddings=1024,hidden_size=1024,num_hidden_layers=18,num_attention_heads=16,intermediate_size=4096,vocab_size=50257"
+    --config_overrides="n_positions=1024,n_embd=1024,n_layer=18,n_head=16"
