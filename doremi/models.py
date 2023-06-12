@@ -136,7 +136,6 @@ class GPTFlashAttnLMHeadModel(GPTLMHeadModelFlash):
         model = cls(config, *args, device=device, dtype=dtype, **kwargs)
         # Load state_dict in cpu because we already initialized the model in GPU, and we don't
         # want extra stuff taking up more GPU memory
-        import ipdb; ipdb.set_trace()
         state_dict = state_dict_from_pretrained(model_name, device='cpu', dtype=dtype)
         if model_name.startswith('gpt2'):
             state_dict = remap_state_dict_hf_gpt2(state_dict, config)
