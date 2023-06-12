@@ -58,7 +58,6 @@ def main():
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir) / args.domain / str(args.subset)
-    # output_dir = Path(args.output_dir) / args.domain
     if output_dir.exists():
         print("Already done, skipping")
         return
@@ -126,6 +125,8 @@ def main():
     # save dataset
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     ds.save_to_disk(output_dir, max_shard_size='1GB', num_proc=args.nproc)
+    shutil.rmtree(str(Path(args.cache_dir) / 'downloads'))
+    shutil.rmtree(str(Path(args.cache_dir) / 'json'))
     ds.cleanup_cache_files()
 
 

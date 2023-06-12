@@ -35,7 +35,7 @@ accelerate launch \
     --main_process_port 60600 \
     doremi/train.py \
     --dataset_name redpajama \
-    --model_type gpt_neox \
+    --model_type gpt_neox_flash \
     --tokenizer_name togethercomputer/RedPajama-INCITE-Base-7B-v0.1 \
     --do_train \
     --cache_dir ${CACHE} \
@@ -43,8 +43,8 @@ accelerate launch \
     --domain_config_path configs/rp_uniform.json \
     --output_dir ${MODEL_OUTPUT_DIR}/${NAME} \
     --max_token_length 2048 \
-    --per_device_train_batch_size 16 \
-    --gradient_accumulation_steps 2 \
+    --per_device_train_batch_size 32 \
+    --gradient_accumulation_steps 1 \
     --dataloader_num_workers 1 \
     --max_steps 50000 \
     --evaluation_strategy no \
@@ -74,4 +74,4 @@ accelerate launch \
     --remove_unused_columns=False \
     --reference_model_name_or_path ${MODEL_OUTPUT_DIR}/rp_baseline_280M_50k/checkpoint-50000 \
     --bf16 \
-    --config_overrides="max_position_embeddings=2048,hidden_size=1024,num_hidden_layers=18,num_attention_heads=16,intermediate_size=4096"
+    --config_overrides="n_embd=1024,n_layer=16,n_head=16"

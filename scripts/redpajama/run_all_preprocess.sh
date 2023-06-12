@@ -10,7 +10,6 @@ DOMAIN=c4
 for ((SUBSET=0; SUBSET<${NUM_SUBSETS}; SUBSET++));
 do
 bash scripts/redpajama/run_preprocess.sh ${DOMAIN} ${SUBSET} ${NUM_SUBSETS}
-rm -r ${CACHE}/downloads ${CACHE}/json
 done
 
 NUM_SUBSETS=5
@@ -19,7 +18,6 @@ do
 for ((SUBSET=0; SUBSET<${NUM_SUBSETS}; SUBSET++));
 do
 bash scripts/redpajama/run_preprocess.sh ${DOMAIN} ${SUBSET} ${NUM_SUBSETS}
-rm -r ${CACHE}/downloads ${CACHE}/json
 done
 done
 
@@ -27,10 +25,9 @@ done
 NUM_SUBSETS=10
 for DOMAIN in 'common_crawl';
 do
-for ((SUBSET=0; SUBSET<8; SUBSET++));
+for ((SUBSET=0; SUBSET<${NUM_SUBSETS}; SUBSET++));
 do
 bash scripts/redpajama/run_preprocess.sh ${DOMAIN} ${SUBSET} ${NUM_SUBSETS}
-rm -r ${CACHE}/downloads ${CACHE}/json
 done
 done
 

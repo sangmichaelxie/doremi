@@ -16,6 +16,7 @@ To get started, please clone the repo, and install it:
 ```
 git clone git@github.com:/sangmichaelxie/doremi.git
 pip install -e doremi
+cd doremi && bash scripts/setup_flash.sh
 ```
 
 All code should be run from the outermost `doremi` directory.
@@ -37,7 +38,7 @@ Here is how to run the sample script for data preprocessing on The Pile, which s
 ```
 bash scripts/run_filter_domains.sh
 ```
-Here is how to run baseline and DoReMi 280M models on preprocessed Pile data:
+Here is how to run baseline and DoReMi 280M models on preprocessed Pile data (tested on one node with 8 A100 GPUs):
 ```
 bash scripts/runs/run_pile_baseline280M.sh
 ```

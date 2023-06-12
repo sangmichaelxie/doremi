@@ -323,6 +323,15 @@ def main():
         config = AutoConfig.from_pretrained(model_args.config_name, **config_kwargs)
     elif model_args.model_name_or_path:
         config = AutoConfig.from_pretrained(model_args.model_name_or_path, **config_kwargs)
+        if model_args.model_type == 'gpt_neox_flash':
+            config = gpt_neox_config_to_gpt2_config(config)
+            config.use_flash_attn = True
+            config.fused_mlp = True
+            config.fused_bias_fc = True
+            config.fused_dropout_add_ln = True
+            config.pad_vocab_size_multiple = 8
+            config.activation_function = 'gelu_new'
+            config.n_inner = None
     else:
         if model_args.model_type == 'gpt_flash': 
             config = GPT2Config(
@@ -368,8 +377,6 @@ def main():
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
 
     if model_args.model_name_or_path:
         torch_dtype = (
@@ -377,6 +384,9 @@ def main():
             if model_args.torch_dtype in ["auto", None]
             else getattr(torch, model_args.torch_dtype)
         )
+    if model_args.model_type in {'gpt_flash', 'gpt_neox_flash'}:
+        model = doremi_models.GPTFlashAttnLMHeadModel.from_pretrained(model_args.model_name_or_path, config=config)
+    else:
         model = AutoModelForCausalLM.from_pretrained(
             model_args.model_name_or_path,
             from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -387,11 +397,7 @@ def main():
             torch_dtype=torch_dtype,
         )
     else:
-        if model_args.model_type == 'gpt2':
-            model = doremi_models.GPT2LMHeadModelFast(config)
-        elif model_args.model_type == 'gpt_neox':
-            model = doremi_models.GPTNeoXForCausalLMFast(config)
-        elif model_args.model_type in {'gpt_flash', 'gpt_neox_flash'}:
+        if model_args.model_type in {'gpt_flash', 'gpt_neox_flash'}:
             model = doremi_models.GPTFlashAttnLMHeadModel(config)
         else:
             model = AutoModelForCausalLM.from_config(config)
@@ -408,54 +414,8 @@ def main():
     domain_list = list(sorted(train_domain_weights_dict.keys()))
     num_domains = len(domain_list)
 
-    if training_args.reweight_domains:
-        torch_dtype = (
-            model_args.torch_dtype
-            if model_args.torch_dtype in ["auto", None]
-            else getattr(torch, model_args.torch_dtype)
-        )
-        if model_args.model_type == 'gpt2':
-            model_cls = doremi_models.GPT2LMHeadModelFast
-        elif model_args.model_type == 'gpt_neox':
-            model_cls = doremi_models.GPTNeoXForCausalLMFast
-        elif model_args.model_type in {'gpt_flash', 'gpt_neox_flash'}:
-            model_cls = doremi_models.GPTFlashAttnLMHeadModel
-        else:
-            model_cls = AutoModelForCausalLM
-            
-        reference_model = model_cls.from_pretrained(
-            training_args.reference_model_name_or_path,
-            from_tf=bool(".ckpt" in training_args.reference_model_name_or_path),
-            config=config,
-            cache_dir=model_args.cache_dir,
-            revision=model_args.model_revision,
-            use_auth_token=True if model_args.use_auth_token else None,
-            torch_dtype=torch_dtype,
-        )
-        for param in reference_model.parameters():
-            param.requires_grad = False
-        reference_model.eval()
-        model.reference_model = reference_model
-        model.register_buffer('train_domain_weights', torch.tensor(
-                [train_domain_weights_dict[domain] for domain in domain_list]))
-        model.register_buffer('avg_domain_weights', model.train_domain_weights.clone())
-        model.register_buffer('perdomain_scores', torch.ones(len(train_domain_weights_dict)) * np.log(len(tokenizer)))
-        model.register_buffer('update_counter', torch.tensor(1))
-
-    else:
-        reference_model = None
-
-    # turn off find unused parameters
-    training_args.ddp_find_unused_parameters = False
-
-    # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
-    # on a small vocab and want a smaller embedding size, remove this test.
-    # embedding_size = model.get_input_embeddings.weight.shape[0]
-    # if len(tokenizer) > embedding_size:
-    #     model.resize_token_embeddings(len(tokenizer))
-
-
     if training_args.do_train:
+        # data script could change tokenizer shape
         train_dataset = data_utils.get_preprocessed_mixed_dataset(
                 preprocessed_dir=data_args.dataset_dir,
                 domain_weights_dict=train_domain_weights_dict,
@@ -465,7 +425,8 @@ def main():
                 sharded=True,
                 max_samples=data_args.max_train_samples,
                 add_domain_id=data_args.add_domain_id,
-                tmp_file=None)
+                tmp_file=None,
+                tokenizer=tokenizer)
 
     if training_args.do_eval:
         eval_dataset = data_utils.get_preprocessed_mixed_dataset(
@@ -504,6 +465,51 @@ def main():
             full_metrics = metric.compute(predictions=preds, references=labels)
             metrics = {**metrics, **full_metrics}
             return metrics
+
+    if training_args.reweight_domains:
+        torch_dtype = (
+            model_args.torch_dtype
+            if model_args.torch_dtype in ["auto", None]
+            else getattr(torch, model_args.torch_dtype)
+        )
+        if model_args.model_type in {'gpt_flash', 'gpt_neox_flash'}:
+            model_cls = doremi_models.GPTFlashAttnLMHeadModel
+            reference_model = model_cls.from_pretrained(
+                training_args.reference_model_name_or_path,
+                config=config)
+        else:
+            model_cls = AutoModelForCausalLM
+            
+            reference_model = model_cls.from_pretrained(
+                training_args.reference_model_name_or_path,
+                from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                config=config,
+                cache_dir=model_args.cache_dir,
+                revision=model_args.model_revision,
+                use_auth_token=True if model_args.use_auth_token else None,
+                torch_dtype=torch_dtype,
+            )
+        for param in reference_model.parameters():
+            param.requires_grad = False
+        reference_model.eval()
+        model.reference_model = reference_model
+        model.register_buffer('train_domain_weights', torch.tensor(
+                [train_domain_weights_dict[domain] for domain in domain_list]))
+        model.register_buffer('avg_domain_weights', model.train_domain_weights.clone())
+        model.register_buffer('perdomain_scores', torch.ones(len(train_domain_weights_dict)) * np.log(len(tokenizer)))
+        model.register_buffer('update_counter', torch.tensor(1))
+
+    else:
+        reference_model = None
+
+    # turn off find unused parameters
+    training_args.ddp_find_unused_parameters = False
+
+    # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
+    # on a small vocab and want a smaller embedding size, remove this test.
+    # embedding_size = model.get_input_embeddings.weight.shape[0]
+    # if len(tokenizer) > embedding_size:
+    #     model.resize_token_embeddings(len(tokenizer))
 
     torch.cuda.empty_cache()
 
