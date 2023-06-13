@@ -68,4 +68,3 @@ accelerate launch \
     --adam_beta2 0.99 \
     --bf16 \
     --config_overrides="n_embd=1024,n_layer=18,n_head=16"
-

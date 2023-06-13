@@ -541,7 +541,7 @@ def main():
 
         if training_args.reweight_domains:
             avg_domain_weights_dict = {}
-            for i in range(len(model.avg_train_domain_weights)):
+            for i in range(len(model.avg_domain_weights)):
                 domain_name = domain_list[i]
                 metrics[f'avg_domain_weight:{domain_name}'] = model.avg_domain_weights[i].item()
                 avg_domain_weights_dict[domain_name] = model.avg_domain_weights[i].item()

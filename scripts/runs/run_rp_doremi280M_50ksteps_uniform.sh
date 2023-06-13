@@ -74,4 +74,4 @@ accelerate launch \
     --remove_unused_columns=False \
     --reference_model_name_or_path ${MODEL_OUTPUT_DIR}/rp_uniform_280M_50k/checkpoint-50000 \
     --bf16 \
-    --config_overrides="n_embd=1024,n_layer=16,n_head=16"
+    --config_overrides="n_embd=1024,n_layer=18,n_head=16"
