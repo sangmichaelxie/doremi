@@ -551,6 +551,11 @@ def main():
             with open(avg_domain_weights_file, 'w') as f:
                 json.dump(avg_domain_weights_dict, f, indent=2)
 
+            # also save to configs dir
+            avg_domain_weights_file = Path(__file__).parent.parent / 'configs' / f"{Path(training_args.output_dir).name}.json"
+            with open(avg_domain_weights_file, 'w') as f:
+                json.dump(avg_domain_weights_dict, f, indent=2)
+
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
         trainer.save_state()
