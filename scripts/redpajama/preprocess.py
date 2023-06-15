@@ -47,7 +47,6 @@ def main():
     parser.add_argument('--dataset_dir', type=str, default='/path/to/redpajama')
     parser.add_argument('--output_dir', type=str, default='/path/to/output_dir')
     parser.add_argument('--domain', type=str, default='common_crawl')
-    parser.add_argument('--num_samples', type=int, default=102400000)
     parser.add_argument('--subset', type=int, default=0)
     parser.add_argument('--num_subsets', type=int, default=95)
     parser.add_argument('--max_length', type=int, default=2048)
@@ -87,8 +86,6 @@ def main():
     else:
         assert(args.subset == num_subsets - 1)
         data_files = all_files[args.subset*subset_size:]
-
-    # args.num_samples = args.num_samples // num_subsets
 
     # load dataset
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, use_fast=True)

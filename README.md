@@ -12,6 +12,8 @@ Note that there may be a few differences between this repo and the paper, which 
 - Tokenizers used (256k vocab size used in paper, while standard GPT2 tokenizer is 50k vocab size). This can siginificantly affect the data mixtures as calculated by token count.
 You should run DoReMi within your own specific training setup for the best results.
 
+## Getting started
+
 To get started, please clone the repo, and install it:
 ```
 git clone git@github.com:/sangmichaelxie/doremi.git
@@ -46,8 +48,21 @@ After training a baseline model, we can run DoReMi:
 ```
 bash scripts/runs/run_pile_doremi280M.sh
 ```
-These scripts run for 200k steps, following the paper, but we also provide more lightweight run scripts for 50k steps, which often gives similar results.
+These scripts run for 200k steps, following the paper.
 
+## Running DoReMi on a custom dataset
+To run DoReMi on your own dataset, provide preprocessed (tokenized) data in the following format:
+```
+top_level/
+    domain_name_1/
+        files...
+    domain_name_2/
+        files...
+    ...
+```
+where each inner directory (e.g., `domain_name_1`) can be loaded via HuggingFace's `load_from_disk` method. If your data is in a different format, you can add a custom data loading function in `doremi/dataloader.py`.
+You will also need to write a config file and save it to `configs/` and write run scripts similar to `scripts/runs/run_pile_baseline280M.sh` and `scripts/runs/run_pile_doremi280M.sh` which refer to the config file. The config file specifies the mapping from domain name to mixture weight. The names do not have to be in order (DoReMi will always sort the domain names first to determine a fixed ordering) and the weights do not have to be normalized.
+ 
 If this was useful to you, please cite the [paper](https://arxiv.org/abs/2305.10429):
 ```
 @article{xie2023doremi,

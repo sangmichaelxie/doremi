@@ -25,7 +25,6 @@ python scripts/redpajama/preprocess.py \
 	--output_dir ${CACHE}/preprocessed_rp \
         --cache_dir ${CACHE} \
 	--domain $DOMAIN \
-	--num_samples 51200000 \
         --max_length 2048 \
         --nproc 95 \
         --num_subsets ${NUM_SUBSETS} \
