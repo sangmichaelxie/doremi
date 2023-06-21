@@ -25,7 +25,7 @@ if [ ! -d "${PREPROCESSED_CACHE}" ]; then
     cp -r ${PREPROCESSED_DATA} ${PREPROCESSED_CACHE}
 fi
 
-NAME=pile_doremi_280M
+NAME=pile_doremi_280M_256kvocab
 accelerate launch \
     --config_file accelerate_config.yml \
     --multi_gpu \
@@ -71,6 +71,6 @@ accelerate launch \
     --train_domain_weights_tmp_file ${CACHE}/tmp_${NAME}_domain_weight \
     --reweight_domains \
     --remove_unused_columns=False \
-    --reference_model_name_or_path ${MODEL_OUTPUT_DIR}/pile_baseline_280M/checkpoint-200000 \
+    --reference_model_name_or_path ${MODEL_OUTPUT_DIR}/pile_baseline_280M_256kvocab/checkpoint-200000 \
     --bf16 \
     --config_overrides="n_positions=1024,n_embd=1024,n_layer=18,n_head=16"

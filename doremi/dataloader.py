@@ -1,5 +1,6 @@
 from pathlib import Path
 import pickle
+import random
 from copy import deepcopy
 from multiprocessing import Array
 from itertools import cycle, chain
@@ -174,7 +175,8 @@ def get_preprocessed_mixed_dataset(
         max_samples=None,
         add_domain_id=False,
         tmp_file=None,
-        tokenizer=None):
+        tokenizer=None,
+        no_interleave=False):
     '''preprocessed_dir: has the following format
                first level: domain directories
                second level: shards for each domain. number of shards per domain should be the same.
@@ -195,8 +197,12 @@ def get_preprocessed_mixed_dataset(
         except Exception:
             raise ValueError(f"dataset_name {dataset_name} not implemented.")
 
-    if dataset_name == 'lawinstruct_english':
-        tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+    # shuffle the shards
+    if seed is not None:
+        random.Random(seed+1).shuffle(all_ds_shards)
+    else:
+        random.Random(1112).shuffle(all_ds_shards)
+
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -231,11 +237,21 @@ def get_preprocessed_mixed_dataset(
             if add_domain_id:
                 domain_ds = domain_ds.map(partial(add_domain_id_fn, domain_idx=domain_idx))
             domain_ds_ls.append(domain_ds)
-        mixed_ds_shard = interleave_datasets(
-                domain_ds_ls,
-                probabilities=probabilities,
-                probabilities_file=probabilities_tmp_file,
-                seed=seed)
+        if no_interleave:
+            # instead of interleaving, run through each dataset
+            def data_generator(shards):
+                for shard in shards:
+                    for ex in shard:
+                        yield ex
+            mixed_ds_shard = IterableDataset.from_generator(data_generator, gen_kwargs={'shards': domain_ds_ls})
+            print("Not interleaving dataset - will not sample according to domain weights")
+
+        else:
+            mixed_ds_shard = interleave_datasets(
+                    domain_ds_ls,
+                    probabilities=probabilities,
+                    probabilities_file=probabilities_tmp_file,
+                    seed=seed)
         per_domain_ds_shards.append(mixed_ds_shard)
 
 

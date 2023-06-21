@@ -44,13 +44,14 @@ Here is how to run baseline and DoReMi 280M models on preprocessed Pile data (te
 ```
 bash scripts/runs/run_pile_baseline280M.sh
 ```
+To run evaluation on a validation split, append `eval` to the end of the training script (`bash scripts/runs/run_pile_baseline280M.sh eval`).
 After training a baseline model, we can run DoReMi:
 ```
 bash scripts/runs/run_pile_doremi280M.sh
 ```
 These scripts run for 200k steps, following the paper.
 
-## Running DoReMi on a custom dataset
+## Running DoReMi on your own dataset
 To run DoReMi on your own dataset, provide preprocessed (tokenized) data in the following format:
 ```
 top_level/

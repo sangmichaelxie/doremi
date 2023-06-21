@@ -45,13 +45,11 @@ import numpy as np
 import transformers
 from transformers import (
     CONFIG_MAPPING,
-    MODEL_FOR_CAUSAL_LM_MAPPING,
     AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
     HfArgumentParser,
     Trainer,
-    TrainingArguments,
     DataCollatorForLanguageModeling,
     is_torch_tpu_available,
     set_seed,
@@ -62,6 +60,7 @@ from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 from transformers.models.gpt2.configuration_gpt2 import GPT2Config
 
+from doremi.training_args import ModelArguments, DataTrainingArguments, FullTrainingArguments
 import doremi.dataloader as data_utils
 from doremi.trainer import DoReMiTrainer
 import doremi.models as doremi_models
@@ -77,180 +76,6 @@ check_min_version("4.27.0")
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 
 logger = logging.getLogger(__name__)
-
-
-MODEL_CONFIG_CLASSES = list(MODEL_FOR_CAUSAL_LM_MAPPING.keys())
-MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
-
-
-@dataclass
-class ModelArguments:
-    """
-    Arguments pertaining to which model/config/tokenizer we are going to fine-tune, or train from scratch.
-    """
-
-    model_name_or_path: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": (
-                "The model checkpoint for weights initialization.Don't set if you want to train a model from scratch."
-            )
-        },
-    )
-    model_type: Optional[str] = field(
-        default=None,
-        metadata={"help": "If training from scratch, pass a model type from the list: " + ", ".join(MODEL_TYPES)},
-    )
-    config_overrides: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": (
-                "Override some existing default config settings when a model is trained from scratch. Example: "
-                "n_embd=10,resid_pdrop=0.2,scale_attn_weights=false,summary_type=cls_index"
-            )
-        },
-    )
-    config_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
-    )
-    tokenizer_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
-    )
-    cache_dir: Optional[str] = field(
-        default=None,
-        metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
-    )
-    use_fast_tokenizer: bool = field(
-        default=True,
-        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
-    )
-    model_revision: str = field(
-        default="main",
-        metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
-    )
-    use_auth_token: bool = field(
-        default=False,
-        metadata={
-            "help": (
-                "Will use the token generated when running `huggingface-cli login` (necessary to use this script "
-                "with private models)."
-            )
-        },
-    )
-    torch_dtype: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": (
-                "Override the default `torch.dtype` and load the model under this dtype. If `auto` is passed, the "
-                "dtype will be automatically derived from the model's weights."
-            ),
-            "choices": ["auto", "bfloat16", "float16", "float32"],
-        },
-    )
-
-    def __post_init__(self):
-        if self.config_overrides is not None and (self.config_name is not None or self.model_name_or_path is not None):
-            raise ValueError(
-                "--config_overrides can't be used in combination with --config_name or --model_name_or_path"
-            )
-
-
-@dataclass
-class DataTrainingArguments:
-    """
-    Arguments pertaining to what data we are going to input our model for training and eval.
-    """
-
-    dataset_dir: str = field(
-        default='.', metadata={"help": "Path to the dataset directory."}
-    )
-    dataset_name: str = field(
-        default='pile', metadata={"help": "Name of the dataset."}
-    )
-    max_train_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of training examples to this "
-                "value if set."
-            )
-        },
-    )
-    max_eval_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of evaluation examples to this "
-                "value if set."
-            )
-        },
-    )
-    max_token_length: int = field(
-        default=1024,
-        metadata={
-            "help": (
-                "Input sequence length after tokenization. "
-            )
-        },
-    )
-    block_size: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "Optional input sequence length after tokenization. "
-                "The training dataset will be truncated in block of this size for training. "
-                "Default to the model max input length for single sentence inputs (take into account special tokens)."
-            )
-        },
-    )
-    overwrite_cache: bool = field(
-        default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
-    )
-    do_padding: bool = field(
-        default=False, metadata={"help": "Pad the inputs."}
-    )
-    add_domain_id: bool = field(
-        default=False, metadata={"help": "Add domain id to examples (when it's not already in the data)."}
-    )
-    preprocessing_num_workers: Optional[int] = field(
-        default=None,
-        metadata={"help": "The number of processes to use for the preprocessing."},
-    )
-
-
-@dataclass
-class FullTrainingArguments(TrainingArguments):
-    domain_config_path: str = field(
-        default='.', metadata={"help": "Path to the domain config file."}
-            )
-    lr_end: float = field(
-            default=1e-3,
-            metadata={"help": "The final learning rate of the learning rate scheduler."},
-    )
-    reweight_domains: bool = field(
-        default=False, metadata={"help": "Do reweighting."}
-    )
-    reweight_eta: float = field(
-            default=1.0,
-            metadata={"help": "Learning rate for reweighting."},
-    )
-    reweight_eps: float = field(
-            default=1e-4,
-            metadata={"help": "Smoothing parameter for reweighting."},
-    )
-    doremi_optimizer: str = field(
-        default='doremiv1', metadata={"help": "Optimizer for DoReMi."}
-    )
-    reference_model_name_or_path: str = field(
-        default='.', metadata={"help": "Path to the reference model."}
-    )
-    lr_scheduler_name: str = field(
-        default=None, metadata={"help": "Custom LR scheduler name (linear_warmup_exponential, linear_warmup_cosine)"}
-    )
-    train_domain_weights_tmp_file: str = field(
-        default=None, metadata={"help": "Path to the temporary file for training domain weights."}
-    )
-
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
@@ -437,34 +262,9 @@ def main():
                 split='validation',
                 sharded=False,
                 add_domain_id=data_args.add_domain_id,
-                max_samples=data_args.max_eval_samples)
-
-        def preprocess_logits_for_metrics(logits, labels):
-            return logits
-
-        metric = evaluate.load("accuracy")
-
-        def compute_metrics(eval_prediction):
-            preds = eval_prediction.predictions.logits.argmax(-1)
-            domain_ids = eval_prediction.predictions.domain_ids
-            labels = eval_prediction.label_ids
-            # preds have the same shape as the labels, after the argmax(-1) has been calculated
-            # by preprocess_logits_for_metrics but we need to shift the labels
-            labels = labels[:, 1:].reshape(-1)
-            preds = preds[:, :-1].reshape(-1)
-
-            metrics = {}
-            for domain_idx in data_args.num_domains:
-                domain_mask = (domain_ids == domain_idx)
-                domain_labels = labels[domain_mask]
-                domain_preds = preds[domain_mask]
-                domain_metrics = metric.compute(predictions=domain_preds, references=domain_labels)
-                for k, v in domain_metrics.items():
-                    metrics[f'{domain_list[domain_idx]}_{k}'] = v
-
-            full_metrics = metric.compute(predictions=preds, references=labels)
-            metrics = {**metrics, **full_metrics}
-            return metrics
+                max_samples=data_args.max_eval_samples,
+                tokenizer=tokenizer,
+                no_interleave=True)
 
     if training_args.reweight_domains:
         torch_dtype = (
@@ -521,10 +321,6 @@ def main():
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=data_utils.get_data_collator(tokenizer, do_padding=data_args.do_padding),
-        compute_metrics=compute_metrics if training_args.do_eval and not is_torch_tpu_available() else None,
-        preprocess_logits_for_metrics=preprocess_logits_for_metrics
-        if training_args.do_eval and not is_torch_tpu_available()
-        else None,
     )
 
     # Training
@@ -552,9 +348,11 @@ def main():
                 json.dump(avg_domain_weights_dict, f, indent=2)
 
             # also save to configs dir
-            avg_domain_weights_file = Path(__file__).parent.parent / 'configs' / f"{Path(training_args.output_dir).name}.json"
-            with open(avg_domain_weights_file, 'w') as f:
-                json.dump(avg_domain_weights_dict, f, indent=2)
+            config_dict = {"train_domain_weights": avg_domain_weights_dict,
+                           "eval_domain_weights": avg_domain_weights_dict}
+            config_dict_file = Path(__file__).parent.parent / 'configs' / f"{Path(training_args.output_dir).name}.json"
+            with open(config_dict_file, 'w') as f:
+                json.dump(config_dict, f, indent=2)
 
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
@@ -564,13 +362,9 @@ def main():
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
 
-        metrics = trainer.evaluate()
+        trainer.load_last_checkpoint()
 
-        try:
-            perplexity = math.exp(metrics["eval_loss"])
-        except OverflowError:
-            perplexity = float("inf")
-        metrics["perplexity"] = perplexity
+        metrics = trainer.evaluate()
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)

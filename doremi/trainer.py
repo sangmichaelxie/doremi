@@ -6,18 +6,40 @@ import json
 import pickle
 import wandb
 import numpy as np
+from collections import defaultdict
+from tqdm import tqdm
 import torch
 import torch.distributed as dist
+from torch import nn
 from torch.optim.lr_scheduler import LRScheduler
 from transformers import Trainer
-from transformers.utils import ExplicitEnum
+from transformers.utils import ExplicitEnum, is_torch_tpu_available
 from transformers.optimization import get_scheduler
 from torch import nn
 from transformers.utils import logging
 from transformers.trainer import is_sagemaker_mp_enabled
+from transformers.trainer_utils import (
+        has_length,
+        denumpify_detensorize,
+        EvalLoopOutput,
+        enable_full_determinism,
+        set_seed,
+        get_last_checkpoint
+)
+from transformers.trainer_pt_utils import (
+        find_batch_size,
+        nested_concat,
+        nested_numpify,
+        nested_truncate,
+        IterableDatasetShard
+)
 
 logger = logging.get_logger(__name__)
 
+if is_torch_tpu_available(check_device=False):
+    import torch_xla.core.xla_model as xm
+    import torch_xla.debug.metrics as met
+    import torch_xla.distributed.parallel_loader as pl
 
 
 class LinearWarmupExponentialLR(LRScheduler):
@@ -354,3 +376,161 @@ class DoReMiTrainer(Trainer):
             loss.backward()
 
         return loss.detach()
+
+    def load_last_checkpoint(self):
+        # Model re-init
+        model_reloaded = False
+        if self.model_init is not None:
+            # Seed must be set before instantiating the model when using model_init.
+            enable_full_determinism(self.args.seed) if self.args.full_determinism else set_seed(self.args.seed)
+            self.model = self.call_model_init(trial)
+            model_reloaded = True
+            # Reinitializes optimizer and scheduler
+            self.optimizer, self.lr_scheduler = None, None
+
+        # Load potential model checkpoint
+        resume_from_checkpoint = get_last_checkpoint(self.args.output_dir)
+        if resume_from_checkpoint is None:
+            raise ValueError(f"No valid checkpoint found in output directory ({self.args.output_dir})")
+
+        if resume_from_checkpoint is not None and not is_sagemaker_mp_enabled() and self.args.deepspeed is None:
+            self._load_from_checkpoint(resume_from_checkpoint)
+
+        # If model was re-initialized, put it on the right device and update self.model_wrapped
+        if model_reloaded:
+            if self.place_model_on_device:
+                self._move_model_to_device(self.model, self.args.device)
+            self.model_wrapped = self.model
+
+
+    def evaluation_loop(
+        self,
+        dataloader,
+        description,
+        prediction_loss_only=None,
+        ignore_keys=None,
+        metric_key_prefix="eval",
+    ):
+        """
+        Prediction/evaluation loop, shared by `Trainer.evaluate()` and `Trainer.predict()`.
+
+        Computes per-domain log-perplexity, uniformly averaged log-perplexity, and worst-case log-perplexity
+        """
+        args = self.args
+
+        if prediction_loss_only:
+            # hack - don't do prediction loss only
+            prediction_loss_only = None
+
+        # if eval is called w/o train init deepspeed here
+        if args.deepspeed and not self.deepspeed:
+            # XXX: eval doesn't have `resume_from_checkpoint` arg but we should be able to do eval
+            # from the checkpoint eventually
+            deepspeed_engine, _, _ = deepspeed_init(
+                self, num_training_steps=0, resume_from_checkpoint=None, inference=True
+            )
+            self.model = deepspeed_engine.module
+            self.model_wrapped = deepspeed_engine
+            self.deepspeed = deepspeed_engine
+
+        model = self._wrap_model(self.model, training=False, dataloader=dataloader)
+
+        # if full fp16 or bf16 eval is wanted and this ``evaluation`` or ``predict`` isn't called
+        # while ``train`` is running, cast it to the right dtype first and then put on device
+        if not self.is_in_train:
+            if args.fp16_full_eval:
+                model = model.to(dtype=torch.float16, device=args.device)
+            elif args.bf16_full_eval:
+                model = model.to(dtype=torch.bfloat16, device=args.device)
+
+        batch_size = self.args.eval_batch_size
+
+        logger.info(f"***** Running {description} *****")
+        if has_length(dataloader):
+            logger.info(f"  Num examples = {self.num_examples(dataloader)}")
+        else:
+            logger.info("  Num examples: Unknown")
+        logger.info(f"  Batch size = {batch_size}")
+
+        model.eval()
+
+        self.callback_handler.eval_dataloader = dataloader
+        # Do this before wrapping.
+        eval_dataset = getattr(dataloader, "dataset", None)
+
+        if is_torch_tpu_available():
+            dataloader = pl.ParallelLoader(dataloader, [args.device]).per_device_loader(args.device)
+
+        if args.past_index >= 0:
+            self._past = None
+
+        loss_fn = nn.CrossEntropyLoss(reduction='sum')
+
+        losses = torch.zeros(len(self.domain_list)).cuda()
+        tokencounts = torch.zeros(len(self.domain_list)).cuda()
+        examplecounts = torch.zeros(len(self.domain_list)).cuda()
+        observed_num_examples = 0
+        # Main evaluation loop
+        for step, inputs in tqdm(enumerate(dataloader)):
+            # Update the observed num examples
+            observed_batch_size = find_batch_size(inputs)
+            if observed_batch_size is not None:
+                observed_num_examples += observed_batch_size
+                # For batch samplers, batch_size is not known by the dataloader in advance.
+                if batch_size is None:
+                    batch_size = observed_batch_size
+
+            # Prediction step
+            loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
+            inputs_decode = self._prepare_input(inputs["input_ids"]) if args.include_inputs_for_metrics else None
+            domain_ids = inputs["domain_ids"].to(loss.device)
+
+            if is_torch_tpu_available():
+                xm.mark_step()
+
+            if isinstance(logits, tuple):
+                logits = logits[0]
+
+            # compute losses per domain
+            for domain_idx, domain_name in enumerate(self.domain_list):
+                domain_mask = (domain_ids == domain_idx)
+                examplecounts[domain_idx] = examplecounts[domain_idx] + domain_mask.sum()
+                
+                if domain_mask.sum() > 0:
+                    domain_labels = labels[domain_mask]
+                    domain_preds = logits[domain_mask]
+                    domain_labels = domain_labels[:, 1:].contiguous().view(-1)
+                    domain_preds = domain_preds[:, :-1, :].contiguous().view(-1, domain_preds.size(-1))
+                    losses[domain_idx] = losses[domain_idx] + loss_fn(domain_preds, domain_labels)
+                    tokencounts[domain_idx] = tokencounts[domain_idx] + (domain_labels != -100).sum()
+
+        torch.distributed.all_reduce(losses)
+        torch.distributed.all_reduce(tokencounts)
+        torch.distributed.all_reduce(examplecounts)
+
+        # losses/preds/labels on CPU (final containers)
+        per_domain_losses = {domain_name: losses[domain_idx].item()
+                             for domain_idx, domain_name in enumerate(self.domain_list) if tokencounts[domain_idx] > 0} 
+        per_domain_tokencounts = {domain_name: tokencounts[domain_idx].item()
+                                  for domain_idx, domain_name in enumerate(self.domain_list) if tokencounts[domain_idx] > 0} 
+        per_domain_examplecounts = {domain_name: examplecounts[domain_idx].item()
+                                    for domain_idx, domain_name in enumerate(self.domain_list) if tokencounts[domain_idx] > 0} 
+
+        # normalize
+        per_domain_losses = {domain_name: per_domain_losses[domain_name] / per_domain_tokencounts[domain_name]
+                             for domain_name in per_domain_losses.keys()}
+
+        metrics = {f"{domain_name}:log_perplexity": per_domain_losses[domain_name]
+                   for domain_name in per_domain_losses.keys()}
+        metrics["uniform_avg_log_perplexity"] = np.mean(list(per_domain_losses.values()))
+        metrics["worst_case_log_perplexity"] = np.amax(list(per_domain_losses.values()))
+
+        # To be JSON-serializable, we need to remove numpy types or zero-d tensors
+        metrics = denumpify_detensorize(metrics)
+
+        # Prefix all keys with metric_key_prefix + '_'
+        for key in list(metrics.keys()):
+            if not key.startswith(f"{metric_key_prefix}_"):
+                metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
+
+        return EvalLoopOutput(predictions=None, label_ids=None, metrics=metrics, num_samples=sum(list(per_domain_examplecounts.values()))) 

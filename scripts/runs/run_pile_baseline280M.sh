@@ -26,13 +26,21 @@ if [ ! -d "${PREPROCESSED_CACHE}" ]; then
     cp -r ${PREPROCESSED_DATA} ${PREPROCESSED_CACHE}
 fi
 
+arg=${1:-""} # set to eval to run eval
 
-NAME=pile_baseline_280M
+if [[ "${arg}" == "eval" ]]; then
+    ADDITIONAL_ARGS="--evaluation_strategy steps --per_device_eval_batch_size 32 --do_train false --remove_unused_columns=False"
+else
+    ADDITIONAL_ARGS=""
+fi
+
+
+NAME=pile_baseline_280M_256kvocab
 accelerate launch \
     --config_file accelerate_config.yml \
-    --num_processes 8 \
     --multi_gpu \
     --num_machines 1 \
+    --num_processes 8 \
     --main_process_port 60200 \
     doremi/train.py \
     --dataset_name pile \
@@ -41,7 +49,7 @@ accelerate launch \
     --do_train \
     --cache_dir ${CACHE} \
     --dataset_dir ${PREPROCESSED_CACHE} \
-    --domain_config_path configs/pile_baseline_50kvocab.json \
+    --domain_config_path configs/pile_baseline_256kvocab.json \
     --output_dir ${MODEL_OUTPUT_DIR}/${NAME} \
     --max_token_length 1024 \
     --per_device_train_batch_size 64 \
@@ -68,4 +76,5 @@ accelerate launch \
     --adam_beta1 0.9 \
     --adam_beta2 0.99 \
     --bf16 \
-    --config_overrides="n_positions=1024,n_embd=1024,n_layer=18,n_head=16"
+    --config_overrides="n_positions=1024,n_embd=1024,n_layer=18,n_head=16" \
+    ${ADDITIONAL_ARGS}
