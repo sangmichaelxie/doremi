@@ -251,7 +251,9 @@ def main():
                 max_samples=data_args.max_train_samples,
                 add_domain_id=data_args.add_domain_id,
                 tmp_file=None,
-                tokenizer=tokenizer)
+                seed=training_args.seed,
+                tokenizer=tokenizer,
+                shuffle=True)
 
     if training_args.do_eval:
         eval_dataset = data_utils.get_preprocessed_mixed_dataset(

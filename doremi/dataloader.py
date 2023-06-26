@@ -176,7 +176,8 @@ def get_preprocessed_mixed_dataset(
         add_domain_id=False,
         tmp_file=None,
         tokenizer=None,
-        no_interleave=False):
+        no_interleave=False,
+        shuffle=False):
     '''preprocessed_dir: has the following format
                first level: domain directories
                second level: shards for each domain. number of shards per domain should be the same.
@@ -264,7 +265,10 @@ def get_preprocessed_mixed_dataset(
                 if max_samples is not None and idx >= max_samples:
                     return
 
-    return IterableDataset.from_generator(data_generator, gen_kwargs={'shards': per_domain_ds_shards, 'max_samples': max_samples})
+    ds = IterableDataset.from_generator(data_generator, gen_kwargs={'shards': per_domain_ds_shards, 'max_samples': max_samples})
+    if shuffle:
+        ds = ds.shuffle(seed=seed+2, buffer_size=10000)
+    return ds
 
 
 def get_data_collator(tokenizer, return_tensors='pt', do_padding=False):
