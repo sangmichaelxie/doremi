@@ -347,10 +347,16 @@ class DoReMiTrainer(Trainer):
                 # compute the rescaled loss, divide by domain weights
                 train_domain_weights = self.read_weights().to(pertoken_loss.device)
                 curr_domain_weights = train_domain_weights[inputs['domain_ids']].unsqueeze(-1).expand_as(pertoken_loss).detach()
-                token_mask = token_mask.detach().type(pertoken_loss.dtype)
                 curr_domain_weights = curr_domain_weights * token_mask
-                curr_domain_weights = curr_domain_weights / curr_domain_weights.sum()
-                loss = (pertoken_loss * curr_domain_weights).sum()
+                normalizer = curr_domain_weights.sum()
+                # gather normalizer across GPUs
+                dist.all_reduce(normalizer, op=torch.distributed.ReduceOp.SUM) 
+                # scale by world size because DDP averages gradients
+                normalizer = normalizer / self.args.world_size
+
+                token_mask = token_mask.detach().type(pertoken_loss.dtype)
+                curr_domain_weights = curr_domain_weights / normalizer
+                loss = (pertoken_loss * curr_domain_weights.detach()).sum()
             else:
                 raise ValueError(f"doremi_optimizer {self.args.doremi_optimizer} is not supported")
         else:

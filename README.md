@@ -49,7 +49,7 @@ After training a baseline model, we can run DoReMi:
 ```
 bash scripts/runs/run_pile_doremi280M.sh
 ```
-These scripts run for 200k steps, following the paper.
+These scripts run for 200k steps, following the paper. The DoReMi run outputs domain weights in the `configs` directory with filename `<RUN_NAME>.json`. Note: so far, DoReMi has not been tested with gradient accumulation (although the code runs). If we accumulate the gradients for `k` steps, there will be `k-1` gradients computed against stale domain weights from the previous iteration (this problem doesn't exist for `k=1`).
 
 ## Running DoReMi on your own dataset
 To run DoReMi on your own dataset, provide preprocessed (tokenized) data in the following format:
