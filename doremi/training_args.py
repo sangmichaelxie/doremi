@@ -138,6 +138,9 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
+    shuffle: bool = field(
+        default=False, metadata={"help": "Shuffle the training data on the fly"}
+    )
 
 
 @dataclass
@@ -171,6 +174,9 @@ class FullTrainingArguments(TrainingArguments):
     )
     train_domain_weights_tmp_file: str = field(
         default=None, metadata={"help": "Path to the temporary file for training domain weights."}
+    )
+    only_eval_last_checkpoint: bool = field(
+        default=False, metadata={"help": "Only do evaluation on last checkpoint instead of all checkpoints."}
     )
 
 

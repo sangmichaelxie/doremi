@@ -1,4 +1,5 @@
 from pathlib import Path
+from collections import Counter
 import pickle
 import random
 from copy import deepcopy
@@ -24,6 +25,8 @@ import shutil
 logger = get_logger(__name__)
 
 
+RANDOM_BATCH_SIZE = 8192
+DEFAULT_SEED=111
 
 class UpdatableRandomlyCyclingMultiSourcesExamplesIterable(
         RandomlyCyclingMultiSourcesExamplesIterable):
@@ -38,7 +41,7 @@ class UpdatableRandomlyCyclingMultiSourcesExamplesIterable(
         self.probabilities = probabilities
 
     @staticmethod
-    def _iter_random_indices(rng, num_sources, probabilities_file=None, probabilities=None, random_batch_size=8192):
+    def _iter_random_indices(rng, num_sources, probabilities_file=None, probabilities=None, random_batch_size=RANDOM_BATCH_SIZE):
         while True:
             # read domain weights
             if probabilities_file is not None:
@@ -107,61 +110,116 @@ def get_dataset(pile_dir, domain_ids_dir, cache_dir=None, split='train'):
     return ds_ls, domain_ids
 
 
-def get_pile_sharded_datasets(
-        preprocessed_dir,
-        cache_dir=None,
-        split='train',
-        sharded=True,
-        ):
-    preprocessed_dir = Path(preprocessed_dir) / split
-    first_domain_dir = list(preprocessed_dir.iterdir())[0]
-    if sharded:
-        num_shards = len(list(first_domain_dir.iterdir()))
-    else:
-        num_shards = 1
-
-    all_ds_shards = [{} for _ in range(num_shards)]
-    for domain_dir in preprocessed_dir.iterdir():
-        domain_shard_ds_ls = []
-        if sharded:
-            for shard_idx, shard_dir in enumerate(domain_dir.iterdir()):
-                ds = load_from_disk(dataset_path=str(shard_dir))
-                all_ds_shards[shard_idx][domain_dir.name] = ds
-        else:
-            all_ds_shards[0][domain_dir.name] = load_from_disk(dataset_path=str(domain_dir))
-    return all_ds_shards
+def simulate_data_skip_per_domain(num_skip_examples, probabilities, rng, random_batch_size=RANDOM_BATCH_SIZE):
+    num_sources = len(probabilities)
+    sampled_domain_idxs = [
+        rng.choice(num_sources, size=random_batch_size, p=probabilities)
+        for _ in range(num_skip_examples // random_batch_size + 1)]
+    sampled_domain_idxs = np.concatenate(sampled_domain_idxs)[:num_skip_examples]
+    counts = Counter(sampled_domain_idxs)
+    return [counts.get(i, 0) for i in range(num_sources)]
 
 
-def get_perdomain_sharded_datasets(
-        preprocessed_dir,
-        domain_weights_dict,
-        cache_dir=None):
-    preprocessed_dir = Path(preprocessed_dir)
-    num_shards = 1
+def determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_names):
+    if num_skip_examples == 0:
+        return {name: 0 for name in domain_names}
 
-    def data_gen(shards):
-        for shard in shards:
+    if domain_weights is None or seed is None or domain_names is None:
+        raise ValueError("If num_skip_examples > 0 then domain_weights, domain_names, and seed must not be None")
+
+    rng = np.random.default_rng(seed)
+    skip_per_domain = simulate_data_skip_per_domain(num_skip_examples, domain_weights, rng)
+    domain_name_to_skip_num = {name: num for name, num in zip(domain_names, skip_per_domain)}
+    return domain_name_to_skip_num
+
+
+def skippable_data_gen(shards, num_skip_examples=0):
+    num_skipped = 0
+    while True:
+        for shard_dir in shards:
+            shard = load_from_disk(dataset_path=str(shard_dir))
+            if num_skipped < num_skip_examples:
+                # try to skip examples
+                if len(shard) < (num_skip_examples - num_skipped):
+                    num_skipped += len(shard)
+                    continue
+                else:
+                    shard = shard.select(range(num_skip_examples - num_skipped, len(shard)))
+                    logger.info(f"Skipped {num_skip_examples} examples in {shard_dir}")
+                    num_skipped = num_skip_examples
+
             for ex in shard:
                 yield ex
 
+
+def get_pile_datasets(
+        preprocessed_dir,
+        cache_dir=None,
+        split='train',
+        seed=DEFAULT_SEED,
+        domain_weights=None,
+        domain_names=None,
+        num_skip_examples=0):
+
+    domain_name_to_skip_num = determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_names)
+
+    preprocessed_dir = Path(preprocessed_dir) / split
+
+    all_ds = {}
+    for domain_dir in preprocessed_dir.iterdir():
+        shards = list(domain_dir.iterdir())
+        random.Random(seed).shuffle(shards)
+        ds = IterableDataset.from_generator(
+                skippable_data_gen,
+                gen_kwargs={'shards': shards,
+                            'num_skip_examples': domain_name_to_skip_num[domain_dir.name]}
+                )
+        all_ds[domain_dir.name] = ds
+        seed += 1
+    return all_ds
+
+
+def get_perdomain_datasets(
+        preprocessed_dir,
+        domain_weights_dict,
+        cache_dir=None,
+        split=None,
+        seed=DEFAULT_SEED,
+        domain_weights=None,
+        domain_names=None,
+        num_skip_examples=0):
+    '''
+    Returns a dictionary from domain name to IterableDataset.
+    '''
+    domain_name_to_skip_num = determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_names)
+
+    preprocessed_dir = Path(preprocessed_dir)
+    if split is not None and (preprocessed_dir / split).exists():
+        preprocessed_dir = preprocessed_dir / split
+    else:
+        logger.warn(f"No split used or split directory not found: using same data for all splits.")
+
     domains = list(sorted(domain_weights_dict.keys()))
 
-    all_ds_shards = [{} for _ in range(num_shards)]
+    all_ds = {}
     for domain in domains:
         domain_dir = preprocessed_dir / domain
 
         if (domain_dir / 'dataset_info.json').exists():
-            print(f"Loading {domain_dir}")
             ds = load_from_disk(dataset_path=str(domain_dir))
-            print(f"Length of {domain_dir}: {len(ds)}")
+            logger.info(f"Loaded {domain_dir}. Length: {len(ds)}")
         else:
-            curr_shards = []
-            for shard_dir in domain_dir.iterdir():
-                print(f"Loading {shard_dir}")
-                curr_shards.append(load_from_disk(dataset_path=str(shard_dir)))
-            ds = IterableDataset.from_generator(data_gen, gen_kwargs={'shards': curr_shards})
-        all_ds_shards[0][domain] = ds
-    return all_ds_shards
+            curr_shards = list(domain_dir.iterdir())
+            # shuffle shard order
+            random.Random(seed).shuffle(curr_shards)
+            ds = IterableDataset.from_generator(
+                    skippable_data_gen,
+                    gen_kwargs={'shards': curr_shards,
+                                'num_skip_examples': domain_name_to_skip_num[domain]}
+                    )
+            seed += 1
+        all_ds[domain] = ds
+    return all_ds
 
 
 def get_preprocessed_mixed_dataset(
@@ -170,49 +228,26 @@ def get_preprocessed_mixed_dataset(
         dataset_name='pile',
         cache_dir=None,
         split='train',
-        sharded=True,
-        seed=None,
+        seed=DEFAULT_SEED,
         max_samples=None,
         add_domain_id=False,
         tmp_file=None,
         tokenizer=None,
         no_interleave=False,
-        shuffle=False):
+        shuffle=False,
+        num_skip_examples=0):
     '''preprocessed_dir: has the following format
                first level: domain directories
                second level: shards for each domain. number of shards per domain should be the same.
 
        domain_weights_dict: dict from domain name to weight
     '''
-
-    if dataset_name == 'pile':
-        all_ds_shards = get_pile_sharded_datasets(
-                preprocessed_dir,
-                cache_dir=cache_dir,
-                split=split,
-                sharded=sharded)
-    else:
-        try:
-            all_ds_shards = get_perdomain_sharded_datasets(
-                preprocessed_dir, domain_weights_dict, cache_dir=cache_dir)
-        except Exception:
-            raise ValueError(f"dataset_name {dataset_name} not implemented.")
-
-    # shuffle the shards
-    if seed is not None:
-        random.Random(seed+1).shuffle(all_ds_shards)
-    else:
-        random.Random(1112).shuffle(all_ds_shards)
-
-
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
     domain_names = list(sorted(domain_weights_dict.keys()))
     domain_to_idx = {domain_names[i]: i for i in range(len(domain_names))}
     domain_weights = np.asarray([domain_weights_dict[domain_name] for domain_name in domain_names])
     domain_weights = domain_weights / domain_weights.sum()
 
+    # write domain weights to file if tmp_file is set
     if tmp_file is not None:
         probabilities_tmp_file = tmp_file
 
@@ -223,49 +258,71 @@ def get_preprocessed_mixed_dataset(
         probabilities = domain_weights
         probabilities_tmp_file = None
 
+    if dataset_name == 'pile':
+        all_ds = get_pile_datasets(
+                preprocessed_dir,
+                cache_dir=cache_dir,
+                split=split,
+                seed=seed,
+                domain_weights=domain_weights,
+                domain_names=domain_names,
+                num_skip_examples=num_skip_examples)
+    else:
+        try:
+            all_ds = get_perdomain_datasets(
+                preprocessed_dir, 
+                domain_weights_dict,
+                cache_dir=cache_dir,
+                split=split,
+                seed=seed,
+                domain_weights=domain_weights,
+                domain_names=domain_names,
+                num_skip_examples=num_skip_examples)
+        except Exception:
+            raise ValueError(f"dataset_name {dataset_name} not implemented.")
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     def add_domain_id_fn(example, domain_idx):
         if 'domain_id' not in example:
             example['domain_id'] = domain_idx
         return example
 
-    per_domain_ds_shards = []
-    for domain_ds_dict in all_ds_shards:
-        domain_ds_ls = []
-        for domain_name in domain_names:
-            domain_idx = domain_to_idx[domain_name]
-            domain_ds = domain_ds_dict[domain_name]
-            # add domain_id if necessary
-            if add_domain_id:
-                domain_ds = domain_ds.map(partial(add_domain_id_fn, domain_idx=domain_idx))
-            domain_ds_ls.append(domain_ds)
-        if no_interleave:
-            # instead of interleaving, run through each dataset
-            def data_generator(shards):
-                for shard in shards:
-                    for ex in shard:
-                        yield ex
-            mixed_ds_shard = IterableDataset.from_generator(data_generator, gen_kwargs={'shards': domain_ds_ls})
-            print("Not interleaving dataset - will not sample according to domain weights")
+    domain_ds_ls = []
+    for domain_name in domain_names:
+        domain_idx = domain_to_idx[domain_name]
+        domain_ds = all_ds[domain_name]
+        # add domain_id if necessary
+        if add_domain_id:
+            domain_ds = domain_ds.map(partial(add_domain_id_fn, domain_idx=domain_idx))
+        domain_ds_ls.append(domain_ds)
 
-        else:
-            mixed_ds_shard = interleave_datasets(
-                    domain_ds_ls,
-                    probabilities=probabilities,
-                    probabilities_file=probabilities_tmp_file,
-                    seed=seed)
-        per_domain_ds_shards.append(mixed_ds_shard)
+    if no_interleave:
+        # instead of interleaving, run through each dataset
+        def data_generator(shards):
+            for shard in shards:
+                for ex in shard:
+                    yield ex
+        ds = IterableDataset.from_generator(data_generator, gen_kwargs={'shards': domain_ds_ls})
+        logger.info("Not interleaving dataset - will not sample according to domain weights")
 
+    else:
+        ds = interleave_datasets(
+                domain_ds_ls,
+                probabilities=probabilities,
+                probabilities_file=probabilities_tmp_file,
+                seed=seed)
 
-    def data_generator(shards, max_samples=None):
+    def take_data_generator(ds, max_samples):
         idx = 0
-        for shard in shards:
-            for ex in shard:
-                yield ex
-                idx += 1
-                if max_samples is not None and idx >= max_samples:
-                    return
+        for ex in ds:
+            yield ex
+            idx += 1
+            if max_samples is not None and idx >= max_samples:
+                return
 
-    ds = IterableDataset.from_generator(data_generator, gen_kwargs={'shards': per_domain_ds_shards, 'max_samples': max_samples})
+    ds = IterableDataset.from_generator(take_data_generator, gen_kwargs={'ds': ds, 'max_samples': max_samples})
     if shuffle:
         ds = ds.shuffle(seed=seed+2, buffer_size=10000)
     return ds

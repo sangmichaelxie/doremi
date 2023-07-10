@@ -3,6 +3,7 @@ import uuid
 import math
 import warnings
 import json
+import re
 import pickle
 import wandb
 import numpy as np
@@ -24,7 +25,8 @@ from transformers.trainer_utils import (
         EvalLoopOutput,
         enable_full_determinism,
         set_seed,
-        get_last_checkpoint
+        get_last_checkpoint,
+        PREFIX_CHECKPOINT_DIR
 )
 from transformers.trainer_pt_utils import (
         find_batch_size,
@@ -149,6 +151,9 @@ class DoReMiTrainer(Trainer):
         self.token_masks = []
         self.domain_ids = []
 
+        # we will take care of skipping in dataloader
+        self.args.ignore_data_skip = True
+
 
     def write_weights(self, weights):
         self.model.update_counter += 1
@@ -272,7 +277,6 @@ class DoReMiTrainer(Trainer):
         wandb_log_dict[f'max_domain_id'] = domain_ids.max().item()
         wandb.log(wandb_log_dict, commit=False)
 
-
     def training_step(self, model, inputs):
         """
         Perform a training step on a batch of inputs.
@@ -383,7 +387,7 @@ class DoReMiTrainer(Trainer):
 
         return loss.detach()
 
-    def load_last_checkpoint(self):
+    def load_checkpoint(self, resume_from_checkpoint=None):
         # Model re-init
         model_reloaded = False
         if self.model_init is not None:
@@ -395,7 +399,9 @@ class DoReMiTrainer(Trainer):
             self.optimizer, self.lr_scheduler = None, None
 
         # Load potential model checkpoint
-        resume_from_checkpoint = get_last_checkpoint(self.args.output_dir)
+        if resume_from_checkpoint is None:
+            resume_from_checkpoint = get_last_checkpoint(self.args.output_dir)
+
         if resume_from_checkpoint is None:
             raise ValueError(f"No valid checkpoint found in output directory ({self.args.output_dir})")
 
@@ -408,6 +414,17 @@ class DoReMiTrainer(Trainer):
                 self._move_model_to_device(self.model, self.args.device)
             self.model_wrapped = self.model
 
+    def get_all_checkpoints(self):
+        folder = self.args.output_dir
+        _re_checkpoint = re.compile(r"^" + PREFIX_CHECKPOINT_DIR + r"\-(\d+)$")
+        content = os.listdir(folder)
+        checkpoints = [
+            os.path.join(folder, path)
+            for path in content
+            if _re_checkpoint.search(path) is not None and os.path.isdir(os.path.join(folder, path))
+        ]
+        checkpoints = list(sorted(checkpoints, key=lambda x: int(_re_checkpoint.search(x).groups()[0])))
+        return checkpoints
 
     def evaluation_loop(
         self,

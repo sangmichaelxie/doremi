@@ -56,6 +56,8 @@ from transformers import (
 )
 from transformers.testing_utils import CaptureLogger
 from transformers.trainer_utils import get_last_checkpoint
+from transformers.trainer_callback import TrainerState
+from transformers.trainer import TRAINER_STATE_NAME
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 from transformers.models.gpt2.configuration_gpt2 import GPT2Config
@@ -117,6 +119,7 @@ def main():
 
     # Detecting last checkpoint.
     last_checkpoint = None
+    num_skip_examples = 0
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
         if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
@@ -129,6 +132,10 @@ def main():
                 f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
+            state = TrainerState.load_from_json(str(Path(last_checkpoint) / TRAINER_STATE_NAME))
+            global_batch_size = training_args.train_batch_size * training_args.gradient_accumulation_steps * training_args.world_size
+            num_skip_examples = state.global_step * global_batch_size
+            logger.info(f"Skipping {num_skip_examples} examples")
 
     # Set seed before initializing model.
     set_seed(training_args.seed)
@@ -247,13 +254,13 @@ def main():
                 dataset_name=data_args.dataset_name,
                 cache_dir=model_args.cache_dir,
                 split='train',
-                sharded=True,
                 max_samples=data_args.max_train_samples,
                 add_domain_id=data_args.add_domain_id,
                 tmp_file=None,
                 seed=training_args.seed,
                 tokenizer=tokenizer,
-                shuffle=True)
+                shuffle=data_args.shuffle,
+                num_skip_examples=num_skip_examples)
 
     if training_args.do_eval:
         eval_dataset = data_utils.get_preprocessed_mixed_dataset(
@@ -262,7 +269,6 @@ def main():
                 dataset_name=data_args.dataset_name,
                 cache_dir=model_args.cache_dir,
                 split='validation',
-                sharded=False,
                 add_domain_id=data_args.add_domain_id,
                 max_samples=data_args.max_eval_samples,
                 tokenizer=tokenizer,
@@ -364,12 +370,20 @@ def main():
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
 
-        trainer.load_last_checkpoint()
+        if training_args.only_eval_last_checkpoint:
+            checkpoint_dirs = [trainer.get_all_checkpoints()[-1]]
+        else:
+            checkpoint_dirs = trainer.get_all_checkpoints()
 
-        metrics = trainer.evaluate()
+        for checkpoint_dir in checkpoint_dirs:
+            trainer.model_init = True
+            trainer.load_checkpoint(checkpoint_dir)
 
-        trainer.log_metrics("eval", metrics)
-        trainer.save_metrics("eval", metrics)
+            metrics = trainer.evaluate()
+
+            checkpoint_name = Path(checkpoint_dir).name 
+            trainer.log_metrics(f"eval_{checkpoint_name}", metrics)
+            trainer.save_metrics("eval_{checkpoint_name}", metrics)
 
 
 
