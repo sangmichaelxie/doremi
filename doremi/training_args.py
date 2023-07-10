@@ -175,8 +175,5 @@ class FullTrainingArguments(TrainingArguments):
     train_domain_weights_tmp_file: str = field(
         default=None, metadata={"help": "Path to the temporary file for training domain weights."}
     )
-    only_eval_last_checkpoint: bool = field(
-        default=False, metadata={"help": "Only do evaluation on last checkpoint instead of all checkpoints."}
-    )
 
 

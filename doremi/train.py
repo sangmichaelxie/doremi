@@ -370,20 +370,14 @@ def main():
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
 
-        if training_args.only_eval_last_checkpoint:
-            checkpoint_dirs = [trainer.get_all_checkpoints()[-1]]
-        else:
-            checkpoint_dirs = trainer.get_all_checkpoints()
+        checkpoint_dir = get_last_checkpoint(training_args.output_dir)
+        trainer.load_checkpoint(checkpoint_dir)
+        state = TrainerState.load_from_json(str(Path(checkpoint_dir) / TRAINER_STATE_NAME))
 
-        for checkpoint_dir in checkpoint_dirs:
-            trainer.model_init = True
-            trainer.load_checkpoint(checkpoint_dir)
+        metrics = trainer.evaluate()
 
-            metrics = trainer.evaluate()
-
-            checkpoint_name = Path(checkpoint_dir).name 
-            trainer.log_metrics(f"eval_{checkpoint_name}", metrics)
-            trainer.save_metrics("eval_{checkpoint_name}", metrics)
+        trainer.log_metrics(f"eval_{state.global_step}", metrics)
+        trainer.save_metrics(f"eval_{state.global_step}", metrics)
 
 
 
