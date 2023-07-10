@@ -164,6 +164,8 @@ def main():
             config.pad_vocab_size_multiple = 8
             config.activation_function = 'gelu_new'
             config.n_inner = None
+            # disable absolute
+            config.max_position_embeddings = 0
     else:
         if model_args.model_type == 'gpt_flash': 
             config = GPT2Config(
@@ -174,6 +176,8 @@ def main():
                     use_flash_attn=True, fused_mlp=True,
                     fused_bias_fc=True, fused_dropout_add_ln=True, 
                     pad_vocab_size_multiple=8)
+            # disable absolute
+            config.max_position_embeddings = 0
         elif model_args.model_type == 'gpt_neox_flash':
             # convert to GPT2 config
             config = CONFIG_MAPPING['gpt_neox']() 
@@ -185,6 +189,8 @@ def main():
             config.pad_vocab_size_multiple = 8
             config.activation_function = 'gelu_new'
             config.n_inner = None
+            # disable absolute
+            config.max_position_embeddings = 0
         else:
             config = CONFIG_MAPPING[model_args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")

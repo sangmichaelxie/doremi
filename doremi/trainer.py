@@ -13,6 +13,7 @@ import torch
 import torch.distributed as dist
 from torch import nn
 from torch.optim.lr_scheduler import LRScheduler
+from datasets import load_dataset
 from transformers import Trainer
 from transformers.utils import ExplicitEnum, is_torch_tpu_available
 from transformers.optimization import get_scheduler
@@ -146,6 +147,7 @@ class DoReMiTrainer(Trainer):
         self.eval_domain_weights_dict = self.domain_config['eval_domain_weights']
 
         self.domain_list = list(sorted(self.train_domain_weights_dict.keys()))
+        self.sampling_weights = torch.tensor([self.train_domain_weights_dict[domain] for domain in self.domain_list])
 
         self.pertoken_scores = []
         self.token_masks = []
@@ -350,6 +352,9 @@ class DoReMiTrainer(Trainer):
             if self.args.doremi_optimizer == 'doremiv1':
                 # compute the rescaled loss, divide by domain weights
                 train_domain_weights = self.read_weights().to(pertoken_loss.device)
+                # if doing non-uniform sampling, normalize by inverse sampling weight
+                train_domain_weights = train_domain_weights / self.sampling_weights.to(train_domain_weights.device)
+                train_domain_weights = train_domain_weights / train_domain_weights.sum()
                 curr_domain_weights = train_domain_weights[inputs['domain_ids']].unsqueeze(-1).expand_as(pertoken_loss).detach()
                 curr_domain_weights = curr_domain_weights * token_mask
                 normalizer = curr_domain_weights.sum()
@@ -425,6 +430,7 @@ class DoReMiTrainer(Trainer):
         ]
         checkpoints = list(sorted(checkpoints, key=lambda x: int(_re_checkpoint.search(x).groups()[0])))
         return checkpoints
+
 
     def evaluation_loop(
         self,
