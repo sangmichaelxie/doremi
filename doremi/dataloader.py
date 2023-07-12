@@ -167,8 +167,11 @@ def get_pile_datasets(
 
     all_ds = {}
     for domain_dir in preprocessed_dir.iterdir():
-        shards = list(domain_dir.iterdir())
-        random.Random(seed).shuffle(shards)
+        if split == 'train':
+            shards = list(domain_dir.iterdir())
+            random.Random(seed).shuffle(shards)
+        else:
+            shards = [domain_dir]
         ds = IterableDataset.from_generator(
                 skippable_data_gen,
                 gen_kwargs={'shards': shards,
