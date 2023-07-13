@@ -234,7 +234,8 @@ def get_perdomain_datasets(
             ds = IterableDataset.from_generator(
                     skippable_data_gen,
                     gen_kwargs={'shards': curr_shards,
-                                'num_skip_examples': domain_name_to_skip_num[domain]}
+                                'num_skip_examples': domain_name_to_skip_num[domain],
+                                'loop': (split == 'train')}
                     )
             seed += 1
         all_ds[domain] = ds
