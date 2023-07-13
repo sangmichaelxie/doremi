@@ -9,7 +9,6 @@ from functools import partial
 import uuid
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Sampler
 from datasets import load_dataset, Dataset, IterableDataset
 from datasets.info import DatasetInfo
 from datasets.iterable_dataset import ExamplesIterable, RandomlyCyclingMultiSourcesExamplesIterable
@@ -133,23 +132,39 @@ def determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_na
     return domain_name_to_skip_num
 
 
-def skippable_data_gen(shards, num_skip_examples=0):
+def skippable_data_gen(shards, num_skip_examples=0, loop=True):
+
+    def get_shard_ds(shard_dir, num_skipped):
+        shard = load_from_disk(dataset_path=str(shard_dir))
+        if num_skipped < num_skip_examples:
+            # try to skip examples
+            if len(shard) < (num_skip_examples - num_skipped):
+                num_skipped += len(shard)
+            else:
+                shard = shard.select(range(num_skip_examples - num_skipped, len(shard)))
+                logger.info(f"Skipped {num_skip_examples} examples in {shard_dir}")
+                num_skipped = num_skip_examples
+        return shard, num_skipped
+
     num_skipped = 0
-    while True:
-        for shard_dir in shards:
-            shard = load_from_disk(dataset_path=str(shard_dir))
-            if num_skipped < num_skip_examples:
-                # try to skip examples
-                if len(shard) < (num_skip_examples - num_skipped):
-                    num_skipped += len(shard)
+    if loop:
+        while True:
+            for shard_dir in shards:
+                shard, num_skipped = get_shard_ds(shard_dir, num_skipped)
+                if num_skipped < num_skip_examples:
                     continue
-                else:
-                    shard = shard.select(range(num_skip_examples - num_skipped, len(shard)))
-                    logger.info(f"Skipped {num_skip_examples} examples in {shard_dir}")
-                    num_skipped = num_skip_examples
+
+                for ex in shard:
+                    yield ex
+    else:
+        for shard_dir in shards:
+            shard, num_skipped = get_shard_ds(shard_dir, num_skipped)
+            if num_skipped < num_skip_examples:
+                continue
 
             for ex in shard:
                 yield ex
+
 
 
 def get_pile_datasets(
@@ -175,7 +190,8 @@ def get_pile_datasets(
         ds = IterableDataset.from_generator(
                 skippable_data_gen,
                 gen_kwargs={'shards': shards,
-                            'num_skip_examples': domain_name_to_skip_num[domain_dir.name]}
+                            'num_skip_examples': domain_name_to_skip_num[domain_dir.name],
+                            'loop': (split == 'train')}
                 )
         all_ds[domain_dir.name] = ds
         seed += 1
@@ -356,60 +372,3 @@ def get_data_collator(tokenizer, return_tensors='pt', do_padding=False):
             batch.pop('domain_id')
         return batch
     return data_collator
-
-
-
-if __name__ == "__main__":
-    # a short test
-
-    PILE_DOMAINS = ['ArXiv', 'BookCorpus2', 'Books3', 'DM Mathematics', 'Enron Emails', 'EuroParl', 'FreeLaw', 'Github', 'Gutenberg (PG-19)', 'HackerNews', 'NIH ExPorter', 'OpenSubtitles', 'OpenWebText2', 'PhilPapers', 'Pile-CC', 'PubMed Abstracts', 'PubMed Central', 'StackExchange', 'USPTO Backgrounds', 'Ubuntu IRC', 'Wikipedia (en)', 'YoutubeSubtitles']
-
-    DOMAIN_TO_IDX = {
-        name: idx for idx, name in enumerate(PILE_DOMAINS)}
-
-    PILE_SUBSETS = [f'0{i}' if i < 10 else str(i) for i in range(0, 30)]
-
-    domain_weights_dict = {domain: 1 for domain in PILE_DOMAINS}
-    ds, domain_weights = get_preprocessed_mixed_dataset(
-            preprocessed_dir='/path/to/preprocessed', # run filter_domains.py in scripts/
-            domain_weights_dict=domain_weights_dict,
-            cache_dir='/path/to/cache',
-            split='train',
-            sharded=True)
-
-    tokenizer = AutoTokenizer.from_pretrained('gpt2', use_fast=True)
-    tokenizer.pad_token = tokenizer.eos_token
-
-    dataloader = DataLoader(
-            ds, batch_size=512, num_workers=1, collate_fn=get_data_collator(tokenizer))
-
-    domain_weights_dict_2 = {domain: 1 if domain == 'Books3' else 0 for domain in PILE_DOMAINS}
-    domain_weights_2_vec = torch.tensor(list(domain_weights_dict_2.values()))
-    domain_weights_2_vec = domain_weights_2_vec / domain_weights_2_vec.sum()
-    phase_1_domains = [0] * len(PILE_DOMAINS)
-    phase_2_domains = [0] * len(PILE_DOMAINS)
-    for i, batch in tqdm(enumerate(dataloader)):
-        if i < 500:
-            for domain_id in batch['domain_ids']:
-                phase_1_domains[domain_id] += 1
-        elif i < 1000:
-            if i == 500:
-                # dataloader.dataset._ex_iterable.set_domain_weights(domain_weights_2_vec)
-                domain_weights[:] = domain_weights_2_vec[:]
-            for domain_id in batch['domain_ids']:
-                phase_2_domains[domain_id] += 1
-        else:
-            break
-
-    phase_1_domains = np.asarray(phase_1_domains)
-    phase_2_domains = np.asarray(phase_2_domains)
-    print("Phase 1")
-    print({domain: count / phase_1_domains.sum() for domain, count in zip(PILE_DOMAINS, phase_1_domains)})
-
-    print("Phase 2")
-    print({domain: count / phase_2_domains.sum() for domain, count in zip(PILE_DOMAINS, phase_2_domains)})
-
-
-
-
-
