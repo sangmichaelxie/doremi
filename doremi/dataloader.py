@@ -174,7 +174,8 @@ def get_pile_datasets(
         seed=DEFAULT_SEED,
         domain_weights=None,
         domain_names=None,
-        num_skip_examples=0):
+        num_skip_examples=0,
+        shard_reversal=False):
 
     domain_name_to_skip_num = determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_names)
 
@@ -184,6 +185,8 @@ def get_pile_datasets(
     for domain_dir in preprocessed_dir.iterdir():
         if split == 'train':
             shards = list(domain_dir.iterdir())
+            if shard_reversal:
+                curr_shards = list(reversed(shards))
             random.Random(seed).shuffle(shards)
         else:
             shards = [domain_dir]
@@ -206,7 +209,8 @@ def get_perdomain_datasets(
         seed=DEFAULT_SEED,
         domain_weights=None,
         domain_names=None,
-        num_skip_examples=0):
+        num_skip_examples=0,
+        shard_reversal=False):
     '''
     Returns a dictionary from domain name to IterableDataset.
     '''
@@ -229,6 +233,8 @@ def get_perdomain_datasets(
             logger.info(f"Loaded {domain_dir}. Length: {len(ds)}")
         else:
             curr_shards = list(domain_dir.iterdir())
+            if shard_reversal:
+                curr_shards = list(reversed(curr_shards))
             # shuffle shard order
             random.Random(seed).shuffle(curr_shards)
             ds = IterableDataset.from_generator(
@@ -255,12 +261,25 @@ def get_preprocessed_mixed_dataset(
         tokenizer=None,
         no_interleave=False,
         shuffle=False,
-        num_skip_examples=0):
+        num_skip_examples=0,
+        shard_reversal=False):
     '''preprocessed_dir: has the following format
                first level: domain directories
                second level: shards for each domain. number of shards per domain should be the same.
 
        domain_weights_dict: dict from domain name to weight
+       dataset_name: name of dataset. update this function to introduce new datasets
+       cache_dir: cache directory for arrow files (if needed)
+       split: train or validation
+       seed: int (controls ordering of data shards)
+       max_samples: int (limit for number of examples)
+       add_domain_id: add domain id to the bath on the fly
+       tmp_file: filename for saving domain weights to disk during doremi (otherwise, we keep the domain weights as a buffer saved along with the model)
+       tokenizer: huggingface tokenizer
+       no_interleave: don't interleave the domains - just iterate through the data in order
+       shuffle: on-the-fly shuffle with a buffer size 100k
+       num_skip_examples: skip examples in the iterator
+       shard_reversal: reverse the shard ordering to prioritize unseen examples
     '''
     domain_names = list(sorted(domain_weights_dict.keys()))
     domain_to_idx = {domain_names[i]: i for i in range(len(domain_names))}
@@ -286,7 +305,8 @@ def get_preprocessed_mixed_dataset(
                 seed=seed,
                 domain_weights=domain_weights,
                 domain_names=domain_names,
-                num_skip_examples=num_skip_examples)
+                num_skip_examples=num_skip_examples,
+                shard_reversal=shard_reversal)
     else:
         try:
             all_ds = get_perdomain_datasets(
@@ -297,7 +317,8 @@ def get_preprocessed_mixed_dataset(
                 seed=seed,
                 domain_weights=domain_weights,
                 domain_names=domain_names,
-                num_skip_examples=num_skip_examples)
+                num_skip_examples=num_skip_examples,
+                shard_reversal=shard_reversal)
         except Exception:
             raise ValueError(f"dataset_name {dataset_name} not implemented.")
 
@@ -344,7 +365,7 @@ def get_preprocessed_mixed_dataset(
 
     ds = IterableDataset.from_generator(take_data_generator, gen_kwargs={'ds': ds, 'max_samples': max_samples})
     if shuffle:
-        ds = ds.shuffle(seed=seed+2, buffer_size=10000)
+        ds = ds.shuffle(seed=seed+2, buffer_size=100000)
     return ds
 
 

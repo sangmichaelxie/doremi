@@ -139,7 +139,7 @@ class DataTrainingArguments:
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
     shuffle: bool = field(
-        default=False, metadata={"help": "Shuffle the training data on the fly"}
+        default=True, metadata={"help": "Shuffle the training data on the fly"}
     )
 
 

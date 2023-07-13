@@ -51,17 +51,33 @@ class GPTFlashAttnLMHeadModel(GPTLMHeadModelFlash):
         return_dict: Optional[bool] = None,
         domain_ids: Optional[torch.LongTensor] = None,
         return_pertoken_losses: Optional[bool] = False,
+        inference_params: Optional[dict] = None,
+        last_token_only: Optional[bool] = False,
+        position_ids: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithDomainIDs]:
-        if not return_pertoken_losses:
-            lm_logits = super().forward(input_ids=input_ids).logits
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-            # move labels to correct device to enable model parallelism
-            labels = labels.to(lm_logits.device)
-            # Shift so that tokens < n predict n
-            shift_logits = lm_logits[:, :-1, :].contiguous()
-            shift_labels = labels[:, 1:].contiguous()
-            # Flatten the tokens
-            loss = self.loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+        if not return_pertoken_losses:
+            lm_logits = super().forward(
+                    input_ids=input_ids,
+                    position_ids=position_ids,
+                    inference_params=inference_params,
+                    last_token_only=last_token_only).logits
+
+            if labels is not None:
+                # move labels to correct device to enable model parallelism
+                labels = labels.to(lm_logits.device)
+                # Shift so that tokens < n predict n
+                shift_logits = lm_logits[:, :-1, :].contiguous()
+                shift_labels = labels[:, 1:].contiguous()
+                # Flatten the tokens
+                loss = self.loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            else:
+                loss = None
+
+            if not return_dict:
+                output = (lm_logits, None, None, None, domain_ids, None, None, None) 
+                return ((loss,) + output) if loss is not None else output
 
             return CausalLMOutputWithDomainIDs(
                 loss=loss,
@@ -71,9 +87,11 @@ class GPTFlashAttnLMHeadModel(GPTLMHeadModelFlash):
                 attentions=None,
                 domain_ids=domain_ids)
         else:
-            return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-            lm_logits = super().forward(input_ids=input_ids).logits
+            lm_logits = super().forward(
+                    input_ids=input_ids,
+                    position_ids=position_ids,
+                    inference_params=inference_params,
+                    last_token_only=last_token_only).logits
 
             loss = None
             pertoken_loss = None
@@ -108,6 +126,9 @@ class GPTFlashAttnLMHeadModel(GPTLMHeadModelFlash):
                         return_dict=return_dict,
                         domain_ids=domain_ids,
                         return_pertoken_losses=True,
+                        position_ids=position_ids,
+                        inference_params=inference_params,
+                        last_token_only=last_token_only,
                     )
                     reference_pertoken_loss = reference_outputs['pertoken_loss']
 

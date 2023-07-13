@@ -199,15 +199,16 @@ def main():
             config.update_from_string(model_args.config_overrides)
             logger.info(f"New config: {config}")
 
-
     tokenizer_kwargs = {
         "cache_dir": model_args.cache_dir,
         "use_fast": model_args.use_fast_tokenizer,
         "revision": model_args.model_revision,
         "use_auth_token": True if model_args.use_auth_token else None,
     }
+
     if model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, **tokenizer_kwargs)
+        
     elif model_args.model_name_or_path:
         tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, **tokenizer_kwargs)
     else:
@@ -266,7 +267,8 @@ def main():
                 seed=training_args.seed,
                 tokenizer=tokenizer,
                 shuffle=data_args.shuffle,
-                num_skip_examples=num_skip_examples)
+                num_skip_examples=num_skip_examples,
+                shard_reversal=training_args.reweight_domains)
 
     if training_args.do_eval:
         eval_dataset = data_utils.get_preprocessed_mixed_dataset(
@@ -384,6 +386,7 @@ def main():
 
         trainer.log_metrics(f"eval_{state.global_step}", metrics)
         trainer.save_metrics(f"eval_{state.global_step}", metrics)
+
 
 
 
