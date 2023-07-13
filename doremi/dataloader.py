@@ -132,10 +132,12 @@ def determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_na
     return domain_name_to_skip_num
 
 
-def skippable_data_gen(shards, num_skip_examples=0, loop=True):
+def skippable_data_gen(shards, num_skip_examples=0, loop=True, seed=111, shuffle=False):
 
-    def get_shard_ds(shard_dir, num_skipped):
+    def get_shard_ds(shard_dir, num_skipped, seed, shuffle):
         shard = load_from_disk(dataset_path=str(shard_dir))
+        if shuffle:
+            shard = shard.shuffle(seed=seed)
         if num_skipped < num_skip_examples:
             # try to skip examples
             if len(shard) < (num_skip_examples - num_skipped):
@@ -150,21 +152,22 @@ def skippable_data_gen(shards, num_skip_examples=0, loop=True):
     if loop:
         while True:
             for shard_dir in shards:
-                shard, num_skipped = get_shard_ds(shard_dir, num_skipped)
+                shard, num_skipped = get_shard_ds(shard_dir, num_skipped, seed, shuffle)
                 if num_skipped < num_skip_examples:
                     continue
 
                 for ex in shard:
                     yield ex
+                seed += 1
     else:
         for shard_dir in shards:
-            shard, num_skipped = get_shard_ds(shard_dir, num_skipped)
+            shard, num_skipped = get_shard_ds(shard_dir, num_skipped, seed, shuffle)
             if num_skipped < num_skip_examples:
                 continue
 
             for ex in shard:
                 yield ex
-
+            seed += 1
 
 
 def get_pile_datasets(
@@ -175,6 +178,7 @@ def get_pile_datasets(
         domain_weights=None,
         domain_names=None,
         num_skip_examples=0,
+        shuffle=False,
         shard_reversal=False):
 
     domain_name_to_skip_num = determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_names)
@@ -194,7 +198,9 @@ def get_pile_datasets(
                 skippable_data_gen,
                 gen_kwargs={'shards': shards,
                             'num_skip_examples': domain_name_to_skip_num[domain_dir.name],
-                            'loop': (split == 'train')}
+                            'loop': (split == 'train'),
+                            'seed': seed,
+                            'shuffle': shuffle}
                 )
         all_ds[domain_dir.name] = ds
         seed += 1
@@ -210,6 +216,7 @@ def get_perdomain_datasets(
         domain_weights=None,
         domain_names=None,
         num_skip_examples=0,
+        shuffle=False,
         shard_reversal=False):
     '''
     Returns a dictionary from domain name to IterableDataset.
@@ -241,7 +248,9 @@ def get_perdomain_datasets(
                     skippable_data_gen,
                     gen_kwargs={'shards': curr_shards,
                                 'num_skip_examples': domain_name_to_skip_num[domain],
-                                'loop': (split == 'train')}
+                                'loop': (split == 'train'),
+                                'seed': seed,
+                                'shuffle': shuffle}
                     )
             seed += 1
         all_ds[domain] = ds
@@ -306,6 +315,7 @@ def get_preprocessed_mixed_dataset(
                 domain_weights=domain_weights,
                 domain_names=domain_names,
                 num_skip_examples=num_skip_examples,
+                shuffle=shuffle,
                 shard_reversal=shard_reversal)
     else:
         try:
@@ -318,6 +328,7 @@ def get_preprocessed_mixed_dataset(
                 domain_weights=domain_weights,
                 domain_names=domain_names,
                 num_skip_examples=num_skip_examples,
+                shuffle=shuffle,
                 shard_reversal=shard_reversal)
         except Exception:
             raise ValueError(f"dataset_name {dataset_name} not implemented.")
@@ -364,8 +375,6 @@ def get_preprocessed_mixed_dataset(
                 return
 
     ds = IterableDataset.from_generator(take_data_generator, gen_kwargs={'ds': ds, 'max_samples': max_samples})
-    if shuffle:
-        ds = ds.shuffle(seed=seed+2, buffer_size=100000)
     return ds
 
 
