@@ -336,10 +336,10 @@ def get_preprocessed_mixed_dataset(
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    def add_domain_id_fn(example, domain_idx):
-        if 'domain_id' not in example:
-            example['domain_id'] = domain_idx
-        return example
+    def add_domain_id_generator(ds, domain_idx):
+        for ex in ds:
+            ex['domain_id'] = domain_idx
+            yield ex
 
     domain_ds_ls = []
     for domain_name in domain_names:
@@ -347,7 +347,7 @@ def get_preprocessed_mixed_dataset(
         domain_ds = all_ds[domain_name]
         # add domain_id if necessary
         if add_domain_id:
-            domain_ds = domain_ds.map(partial(add_domain_id_fn, domain_idx=domain_idx))
+            domain_ds = IterableDataset.from_generator(add_domain_id_generator, gen_kwargs={'ds': domain_ds, 'domain_idx': domain_idx})
         domain_ds_ls.append(domain_ds)
 
     if no_interleave:
