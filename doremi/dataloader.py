@@ -236,24 +236,24 @@ def get_perdomain_datasets(
         domain_dir = preprocessed_dir / domain
 
         if (domain_dir / 'dataset_info.json').exists():
-            ds = load_from_disk(dataset_path=str(domain_dir))
-            logger.info(f"Loaded {domain_dir}. Length: {len(ds)}")
+            curr_shards = [domain_dir]
         else:
             curr_shards = list(domain_dir.iterdir())
             if shard_reversal:
                 curr_shards = list(reversed(curr_shards))
             # shuffle shard order
             random.Random(seed).shuffle(curr_shards)
-            ds = IterableDataset.from_generator(
-                    skippable_data_gen,
-                    gen_kwargs={'shards': curr_shards,
-                                'num_skip_examples': domain_name_to_skip_num[domain],
-                                'loop': (split == 'train'),
-                                'seed': seed,
-                                'shuffle': shuffle}
-                    )
-            seed += 1
+
+        ds = IterableDataset.from_generator(
+                skippable_data_gen,
+                gen_kwargs={'shards': curr_shards,
+                            'num_skip_examples': domain_name_to_skip_num[domain],
+                            'loop': (split == 'train'),
+                            'seed': seed,
+                            'shuffle': shuffle}
+                )
         all_ds[domain] = ds
+        seed += 1
     return all_ds
 
 
@@ -306,6 +306,7 @@ def get_preprocessed_mixed_dataset(
         probabilities = domain_weights
         probabilities_tmp_file = None
 
+    # TODO: load pile with perdomain_datasets
     if dataset_name == 'pile':
         all_ds = get_pile_datasets(
                 preprocessed_dir,
@@ -378,17 +379,33 @@ def get_preprocessed_mixed_dataset(
     return ds
 
 
-def get_data_collator(tokenizer, return_tensors='pt', do_padding=False):
+def get_data_collator(tokenizer, return_tensors='pt', do_padding=False, max_length=1024):
     def data_collator(features):
         if not do_padding:
-            batch = {
-                    k: torch.tensor([f[k] for f in features])
-                    for k in features[0].keys()
-                    }
+            try:
+                batch = {
+                        k: torch.tensor([f[k] for f in features])
+                        for k in features[0].keys()
+                        }
+            except Exception:
+                # try padding
+                batch = tokenizer.pad(
+                        [{k: v for k, v in f.items() if k not in {'domain_id', 'domain_ids'}} for f in features],
+                        return_tensors=return_tensors,
+                        pad_to_multiple_of=max_length)
+
+                if 'domain_id' in features[0]:
+                    batch['domain_id'] = torch.tensor([f['domain_id'] for f in features])
+                elif 'domain_ids' in features[0]:
+                    batch['domain_ids'] = torch.tensor([f['domain_ids'] for f in features])
+
         else:
-            batch = tokenizer.pad(features, return_tensors=return_tensors, pad_to_multiple_of=tokenizer.model_max_length)
-        batch['attention_mask'] = batch['attention_mask'].long()
+            batch = tokenizer.pad(features, return_tensors=return_tensors, pad_to_multiple_of=max_length)
         batch['input_ids'] = batch['input_ids'].long()
+        if 'attention_mask' not in batch:
+            batch['attention_mask'] = torch.ones_like(batch['input_ids']).long()
+        else:
+            batch['attention_mask'] = batch['attention_mask'].long()
 
         batch.pop("special_tokens_mask", None)
         if 'labels' not in batch:
