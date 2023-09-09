@@ -25,22 +25,14 @@ https://huggingface.co/models?filter=text-generation
 # You can also adapt this script on your own causal language modeling task. Pointers for this are left as comments.
 
 import logging
-import math
 from pathlib import Path
 import os
 import sys
-from dataclasses import dataclass, field
-from itertools import chain
-from typing import Optional
 import json
 import numpy as np
-import pickle
 
 import datasets
-import evaluate
 import torch
-from datasets import load_dataset
-import numpy as np
 
 import transformers
 from transformers import (
@@ -49,16 +41,12 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     HfArgumentParser,
-    Trainer,
-    DataCollatorForLanguageModeling,
-    is_torch_tpu_available,
     set_seed,
 )
-from transformers.testing_utils import CaptureLogger
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.trainer_callback import TrainerState
 from transformers.trainer import TRAINER_STATE_NAME
-from transformers.utils import check_min_version, send_example_telemetry
+from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
 from transformers.models.gpt2.configuration_gpt2 import GPT2Config
 
@@ -78,6 +66,7 @@ check_min_version("4.27.0")
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 
 logger = logging.getLogger(__name__)
+
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
@@ -167,20 +156,20 @@ def main():
             # disable absolute
             config.max_position_embeddings = 0
     else:
-        if model_args.model_type == 'gpt_flash': 
+        if model_args.model_type == 'gpt_flash':
             config = GPT2Config(
                     vocab_size=50257, n_positions=2048, n_embd=2048,
-                    n_layer=24, n_head=16, 
-                    scale_attn_by_inverse_layer_idx=True, 
+                    n_layer=24, n_head=16,
+                    scale_attn_by_inverse_layer_idx=True,
                     rotary_emb_fraction=0.5,
                     use_flash_attn=True, fused_mlp=True,
-                    fused_bias_fc=True, fused_dropout_add_ln=True, 
+                    fused_bias_fc=True, fused_dropout_add_ln=True,
                     pad_vocab_size_multiple=8)
             # disable absolute
             config.max_position_embeddings = 0
         elif model_args.model_type == 'gpt_neox_flash':
             # convert to GPT2 config
-            config = CONFIG_MAPPING['gpt_neox']() 
+            config = CONFIG_MAPPING['gpt_neox']()
             config = gpt_neox_config_to_gpt2_config(config)
             config.use_flash_attn = True
             config.fused_mlp = True
@@ -208,7 +197,6 @@ def main():
 
     if model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, **tokenizer_kwargs)
-        
     elif model_args.model_name_or_path:
         tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, **tokenizer_kwargs)
     else:
@@ -216,6 +204,7 @@ def main():
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
+    tokenizer.model_max_length = data_args.max_token_length
 
     if model_args.model_name_or_path:
         torch_dtype = (
@@ -251,36 +240,6 @@ def main():
     eval_domain_weights_dict = domain_config['eval_domain_weights']
     # whenever we convert dict to array, we sort by key
     domain_list = list(sorted(train_domain_weights_dict.keys()))
-    num_domains = len(domain_list)
-
-    if training_args.do_train:
-        # data script could change tokenizer shape
-        train_dataset = data_utils.get_preprocessed_mixed_dataset(
-                preprocessed_dir=data_args.dataset_dir,
-                domain_weights_dict=train_domain_weights_dict,
-                dataset_name=data_args.dataset_name,
-                cache_dir=model_args.cache_dir,
-                split='train',
-                max_samples=data_args.max_train_samples,
-                add_domain_id=data_args.add_domain_id,
-                tmp_file=None,
-                seed=training_args.seed,
-                tokenizer=tokenizer,
-                shuffle=data_args.shuffle,
-                num_skip_examples=num_skip_examples,
-                shard_reversal=training_args.reweight_domains)
-
-    if training_args.do_eval:
-        eval_dataset = data_utils.get_preprocessed_mixed_dataset(
-                preprocessed_dir=data_args.dataset_dir,
-                domain_weights_dict=eval_domain_weights_dict,
-                dataset_name=data_args.dataset_name,
-                cache_dir=model_args.cache_dir,
-                split='validation',
-                add_domain_id=data_args.add_domain_id,
-                max_samples=data_args.max_eval_samples,
-                tokenizer=tokenizer,
-                no_interleave=True)
 
     if training_args.reweight_domains:
         torch_dtype = (
@@ -295,7 +254,6 @@ def main():
                 config=config)
         else:
             model_cls = AutoModelForCausalLM
-            
             reference_model = model_cls.from_pretrained(
                 training_args.reference_model_name_or_path,
                 from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -307,16 +265,52 @@ def main():
             )
         for param in reference_model.parameters():
             param.requires_grad = False
-        reference_model.eval()
         model.reference_model = reference_model
+        total_domain_weight = sum(train_domain_weights_dict.values())
         model.register_buffer('train_domain_weights', torch.tensor(
-                [train_domain_weights_dict[domain] for domain in domain_list]))
+                [train_domain_weights_dict[domain] / total_domain_weight for domain in domain_list]))
         model.register_buffer('avg_domain_weights', model.train_domain_weights.clone())
         model.register_buffer('perdomain_scores', torch.ones(len(train_domain_weights_dict)) * np.log(len(tokenizer)))
         model.register_buffer('update_counter', torch.tensor(1))
 
     else:
         reference_model = None
+
+    if training_args.do_train:
+        # data script could change tokenizer shape
+        train_dataset = data_utils.get_preprocessed_mixed_dataset(
+                preprocessed_dir=data_args.dataset_dir,
+                domain_weights_dict=train_domain_weights_dict,
+                dataset_name=data_args.dataset_name,
+                cache_dir=model_args.cache_dir,
+                split='train',
+                max_samples=data_args.max_train_samples,
+                add_domain_id=data_args.add_domain_id,
+                domain_weight_buffer_handle=None,
+                seed=training_args.seed,
+                tokenizer=tokenizer,
+                shuffle=data_args.shuffle,
+                num_skip_examples=num_skip_examples,
+                shard_reversal=training_args.reweight_domains,
+                keep_in_memory=data_args.keep_in_memory)
+
+    if training_args.do_eval:
+        if data_args.eval_dataset_dir is None:
+            data_args.eval_dataset_dir = data_args.dataset_dir
+        if data_args.eval_dataset_name is None:
+            data_args.eval_dataset_name = data_args.dataset_name
+
+        eval_dataset = data_utils.get_preprocessed_mixed_dataset(
+                preprocessed_dir=data_args.eval_dataset_dir,
+                domain_weights_dict=eval_domain_weights_dict,
+                dataset_name=data_args.eval_dataset_name,
+                cache_dir=model_args.cache_dir,
+                split='validation',
+                add_domain_id=data_args.add_domain_id,
+                max_samples=data_args.max_eval_samples,
+                tokenizer=tokenizer,
+                no_interleave=True,
+                keep_in_memory=data_args.keep_in_memory)
 
     # turn off find unused parameters
     training_args.ddp_find_unused_parameters = False
@@ -336,7 +330,7 @@ def main():
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
-        data_collator=data_utils.get_data_collator(tokenizer, do_padding=data_args.do_padding),
+        data_collator=data_utils.get_data_collator(tokenizer, do_padding=data_args.do_padding, max_length=data_args.max_token_length),
     )
 
     # Training
@@ -378,16 +372,29 @@ def main():
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
 
-        checkpoint_dir = get_last_checkpoint(training_args.output_dir)
-        trainer.load_checkpoint(checkpoint_dir)
-        state = TrainerState.load_from_json(str(Path(checkpoint_dir) / TRAINER_STATE_NAME))
+        if training_args.eval_all_checkpoints:
+            checkpoint_dir_list = trainer.get_all_checkpoints(training_args.output_dir)
+        else:
+            checkpoint_dir_list = [get_last_checkpoint(training_args.output_dir)]
 
-        metrics = trainer.evaluate()
+        for checkpoint_dir in checkpoint_dir_list:
+            trainer.load_checkpoint(checkpoint_dir)
+            state = TrainerState.load_from_json(str(Path(checkpoint_dir) / TRAINER_STATE_NAME))
+            trainer.state.global_step = state.global_step
 
-        trainer.log_metrics(f"eval_{state.global_step}", metrics)
-        trainer.save_metrics(f"eval_{state.global_step}", metrics)
+            if not training_args.skip_perplexity_eval:
+                metrics = trainer.evaluate()
+                trainer.log_metrics("eval", metrics)
+                trainer.save_metrics("eval", metrics)
 
-
+            if training_args.downstream_datasets is not None:
+                dataset_names = training_args.downstream_datasets.split(',')
+                downstream_metrics = trainer.evaluate_fewshot(
+                        dataset_names,
+                        max_samples=data_args.max_downstream_samples,
+                        num_shots=training_args.downstream_num_shots)
+                trainer.log_metrics("eval", downstream_metrics)
+                trainer.save_metrics("eval", downstream_metrics)
 
 
 def _mp_fn(index):

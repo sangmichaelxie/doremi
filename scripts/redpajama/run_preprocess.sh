@@ -29,4 +29,5 @@ python scripts/redpajama/preprocess.py \
         --nproc 95 \
         --num_subsets ${NUM_SUBSETS} \
         --subset ${SUBSET} \
+	--num_validation_examples 1000000 \
         --seed 111

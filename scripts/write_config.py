@@ -4,33 +4,55 @@ import argparse
 from datasets import load_from_disk
 from collections import defaultdict
 import shutil
+import math
+from tqdm import tqdm
+from joblib import Parallel, delayed
+from transformers import AutoTokenizer
 
 
 PILE_DOMAINS = ['ArXiv', 'BookCorpus2', 'Books3', 'DM Mathematics', 'Enron Emails', 'EuroParl', 'FreeLaw', 'Github', 'Gutenberg (PG-19)', 'HackerNews', 'NIH ExPorter', 'OpenSubtitles', 'OpenWebText2', 'PhilPapers', 'Pile-CC', 'PubMed Abstracts', 'PubMed Central', 'StackExchange', 'USPTO Backgrounds', 'Ubuntu IRC', 'Wikipedia (en)', 'YoutubeSubtitles']
 
 
-def compute_pile_baseline_weights(preprocessed_dir, cache_dir):
+def compute_pile_baseline_weights(preprocessed_dir, cache_dir, nopack=False, tokenizer=None):
 
-    preprocessed_dir = Path(preprocessed_dir)
-    cached_preprocessed_dir = Path(cache_dir) / 'preprocessed_cache' / preprocessed_dir.name
-    cached_preprocessed_dir.parent.mkdir(parents=True, exist_ok=True)
+    preprocessed_dir = Path(preprocessed_dir) / 'train'
 
-    if not cached_preprocessed_dir.exists():
-        print("Copying preprocessed files to cache")
-        shutil.copytree(str(preprocessed_dir), str(cached_preprocessed_dir))
+    def process_shard(shard_dir):
+        curr_count = 0
+        ds = load_from_disk(dataset_path=str(shard_dir))
+        if nopack:
+            # in the DoReMi paper, we first padded to the context length then counted
+            # the number of chunks, and dynamically packed the examples
+            # together (possibly even from different domains)
+            num_tokens_in_curr_doc = 0
+            chunk_size = 1024
+            for ex in tqdm(ds):
+                toks = ex['input_ids']
+                sep_idxs = [i for i in range(len(toks)) if toks[i] == tokenizer.eos_token_id]
+                if len(sep_idxs) > 0:
+                    prev_sep_idx = -1
+                    for sep_idx in sep_idxs:
+                        num_tokens_in_curr_doc += sep_idx - prev_sep_idx - 1
+                        prev_sep_idx = sep_idx
+                        curr_count += math.ceil(num_tokens_in_curr_doc / chunk_size)
+                        num_tokens_in_curr_doc = 0
+                    if prev_sep_idx != len(toks) - 1:
+                        num_tokens_in_curr_doc += len(toks) - prev_sep_idx - 1
+                else:
+                    num_tokens_in_curr_doc += len(toks)
+            if num_tokens_in_curr_doc > 0:
+                curr_count += math.ceil(num_tokens_in_curr_doc / chunk_size)
+        else:
+            curr_count = len(ds)
 
-    preprocessed_dir = cached_preprocessed_dir / 'train'
-
-    first_domain_dir = list(preprocessed_dir.iterdir())[0]
-    num_shards = len(list(first_domain_dir.iterdir()))
+        return curr_count
 
     domain_lens = defaultdict(int)
     for domain_dir in preprocessed_dir.iterdir():
         print("Counting domain", domain_dir.name)
-        domain_shard_ds_ls = []
-        for shard_idx, shard_dir in enumerate(domain_dir.iterdir()):
-            ds = load_from_disk(dataset_path=str(shard_dir))
-            domain_lens[domain_dir.name] += len(ds)
+        counts = Parallel(n_jobs=30)(delayed(process_shard)(shard_dir) for shard_dir in domain_dir.iterdir())
+        domain_lens[domain_dir.name] = sum(counts)
+
     # multiply by epochs to get weights according to effective sizes
     pile_epochs = {
         'Pile-CC': 1.0,
@@ -69,14 +91,17 @@ def main():
     parser.add_argument("--config_name", type=str, default="baseline")
     parser.add_argument("--preprocessed_dir", type=str, default="/path/to/preprocessed")
     parser.add_argument("--cache_dir", type=str, default="/path/to/cache")
+    parser.add_argument("--nopack", action='store_true')
+    parser.add_argument("--tokenizer", type=str, default='togethercomputer/RedPajama-INCITE-Base-7B-v0.1')
     args = parser.parse_args()
 
     config_dir = Path("configs")
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / f"{args.config_name}.json"
 
-    if args.config_name == 'pile_baseline_50kvocab':
-        domain_weights = compute_pile_baseline_weights(args.preprocessed_dir, args.cache_dir)
+    if args.config_name.startswith('pile_baseline'):
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+        domain_weights = compute_pile_baseline_weights(args.preprocessed_dir, args.cache_dir, nopack=args.nopack, tokenizer=tokenizer)
         config = {
             "train_domain_weights": domain_weights,
             "eval_domain_weights": domain_weights,
@@ -162,8 +187,9 @@ def main():
     else:
         raise ValueError(f"Unknown config name {args.config_name}")
 
+    print(json.dumps(config, indent=2))
     with open(config_path, 'w') as f:
-        json.dump(config, f)
+        json.dump(config, f, indent=2)
 
 if __name__ == '__main__':
     main()

@@ -12,6 +12,7 @@ import numpy as np
 from datasets import Features, Sequence, Value
 import shutil
 from itertools import chain
+from tokenizers.processors import TemplateProcessing
 
 
 PILE_DOMAINS = ['ArXiv', 'BookCorpus2', 'Books3', 'DM Mathematics', 'Enron Emails', 'EuroParl', 'FreeLaw', 'Github', 'Gutenberg (PG-19)', 'HackerNews', 'NIH ExPorter', 'OpenSubtitles', 'OpenWebText2', 'PhilPapers', 'Pile-CC', 'PubMed Abstracts', 'PubMed Central', 'StackExchange', 'USPTO Backgrounds', 'Ubuntu IRC', 'Wikipedia (en)', 'YoutubeSubtitles']
@@ -27,8 +28,8 @@ def pile_transform(tokenizer, max_length, seed=None):
         # tokenize
         examples = tokenizer(batch['text'])
 
-        # Concatenate all texts.
-        examples = {k: list(chain(*examples[k])) for k in examples.keys()}
+        # Concatenate all texts. attention mask is all 1
+        examples = {k: list(chain(*examples[k])) for k in examples.keys() if k!= 'attention_mask'}
         total_length = len(examples[list(examples.keys())[0]])
         # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
         # customize this part to your needs.
@@ -53,7 +54,6 @@ def main():
     parser.add_argument('--intermediate_dir', type=str, default='/path/to/intermediate')
     parser.add_argument('--domain', type=str, default='Books3')
     parser.add_argument('--subset', type=str, default='01')
-    parser.add_argument('--num_samples', type=int, default=102400000)
     parser.add_argument('--max_length', type=int, default=1024)
     parser.add_argument('--nproc', type=int, default=8)
     parser.add_argument('--split', type=str, default='train')
@@ -95,6 +95,10 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, use_fast=True)
     tokenizer.pad_token = tokenizer.eos_token
+    # add a separator token
+    tokenizer._tokenizer.post_processor = TemplateProcessing(
+            single="$A "+tokenizer.eos_token,
+            special_tokens=[(tokenizer.eos_token, tokenizer.eos_token_id)])
     transform = pile_transform(tokenizer, args.max_length, seed=args.seed)
 
     ds = ds.filter(filter_fn, with_indices=True)
@@ -107,13 +111,10 @@ def main():
             ex['domain_id'] = domain_id_fn(ex)
             yield ex
             count += 1
-            if count >= args.num_samples:
-                return
 
     features = Features({
             "input_ids": Sequence(Value("int32")),
-            "attention_mask": Sequence(Value("bool")),
-            "domain_id": Value("int64"),
+            "domain_id": Value("int32"),
         })
     processed_ds = Dataset.from_generator(data_generator, features=features)
 

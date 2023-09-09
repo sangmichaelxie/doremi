@@ -1,8 +1,8 @@
 from setuptools import setup, find_packages
 
 setup(name='doremi',
-      version='0.0.1',
-      description='DoReMi Data reweighting algorithm',
+      version='1.0.0',
+      description='DoReMi: Data mixture reweighting algorithm',
       url='https://github.com/sangmichaelxie/doremi',
       author='Sang Michael Xie',
       author_email='xie@cs.stanford.edu',
@@ -19,7 +19,6 @@ setup(name='doremi',
         'evaluate==0.4.0',
         'scikit-learn==1.2.2',
         'wandb==0.14.0',
-        'xformers==0.0.17',
         'tqdm',
       ],
 )

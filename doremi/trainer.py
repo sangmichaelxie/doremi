@@ -1,10 +1,8 @@
-import os
-import uuid
 import math
 import warnings
 import json
 import re
-import pickle
+from pathlib import Path
 import wandb
 import numpy as np
 from collections import defaultdict
@@ -13,13 +11,15 @@ import torch
 import torch.distributed as dist
 from torch import nn
 from torch.optim.lr_scheduler import LRScheduler
-from datasets import load_dataset
+from torch.utils.data import DataLoader
+from datasets import IterableDataset
 from transformers import Trainer
 from transformers.utils import ExplicitEnum, is_torch_tpu_available
 from transformers.optimization import get_scheduler
-from torch import nn
 from transformers.utils import logging
 from transformers.trainer import is_sagemaker_mp_enabled
+from transformers.modeling_utils import unwrap_model
+from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 from transformers.trainer_utils import (
         has_length,
         denumpify_detensorize,
@@ -29,13 +29,10 @@ from transformers.trainer_utils import (
         get_last_checkpoint,
         PREFIX_CHECKPOINT_DIR
 )
-from transformers.trainer_pt_utils import (
-        find_batch_size,
-        nested_concat,
-        nested_numpify,
-        nested_truncate,
-        IterableDatasetShard
-)
+from transformers.trainer_pt_utils import find_batch_size
+
+from doremi.eval_datasets import get_eval_dataset
+
 
 logger = logging.get_logger(__name__)
 
@@ -55,15 +52,12 @@ class LinearWarmupExponentialLR(LRScheduler):
         self.lr_start = lr_start
         self.lr_end = lr_end
         super().__init__(optimizer, last_epoch, verbose)
-        # figure out decay rate to use to get within 1e-10 of lr_end at end of training
-        self.gammas = [np.exp(np.log(1e-10 / (base_lr - self.lr_end)) / (self.num_training_steps - self.num_warmup_steps))
-                       for base_lr in self.base_lrs]
 
     def get_lr(self):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, please use `get_last_lr()`.", UserWarning)
 
-        if self.last_epoch == 0 or self.last_epoch > self.num_training_steps:
+        if self.last_epoch > self.num_training_steps:
             return [group['lr'] for group in self.optimizer.param_groups]
 
         return self._get_closed_form_lr()
@@ -72,7 +66,10 @@ class LinearWarmupExponentialLR(LRScheduler):
         if self.last_epoch < self.num_warmup_steps:
             return [self.lr_start + (base_lr - self.lr_start) * self.last_epoch / self.num_warmup_steps for base_lr in self.base_lrs]
         else:
-            return [self.lr_end + (base_lr - self.lr_end) * gamma ** (self.last_epoch - self.num_warmup_steps) for gamma, base_lr in zip(self.base_lrs, self.gammas)]
+            # figure out decay rate to use to get within 1e-10 of lr_end at end of training
+            gammas = [np.exp(np.log(1e-10 / (base_lr - self.lr_end)) / (self.num_training_steps - self.num_warmup_steps))
+                      for base_lr in self.base_lrs]
+            return [self.lr_end + (base_lr - self.lr_end) * gamma ** (self.last_epoch - self.num_warmup_steps) for base_lr, gamma in zip(self.base_lrs, gammas)]
 
 
 class LinearWarmupCosineLR(LRScheduler):
@@ -90,7 +87,7 @@ class LinearWarmupCosineLR(LRScheduler):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, please use `get_last_lr()`.", UserWarning)
 
-        if self.last_epoch == 0 or self.last_epoch > self.num_training_steps:
+        if self.last_epoch > self.num_training_steps:
             return [group['lr'] for group in self.optimizer.param_groups]
 
         return self._get_closed_form_lr()
@@ -146,6 +143,7 @@ class DoReMiTrainer(Trainer):
         self.train_domain_weights_dict = self.domain_config['train_domain_weights']
         self.eval_domain_weights_dict = self.domain_config['eval_domain_weights']
 
+        self.eval_domain_list = list(sorted(self.eval_domain_weights_dict.keys()))
         self.domain_list = list(sorted(self.train_domain_weights_dict.keys()))
         self.sampling_weights = torch.tensor([self.train_domain_weights_dict[domain] for domain in self.domain_list])
 
@@ -156,23 +154,22 @@ class DoReMiTrainer(Trainer):
         # we will take care of skipping in dataloader
         self.args.ignore_data_skip = True
 
-
     def write_weights(self, weights):
         self.model.update_counter += 1
-        self.model.train_domain_weights[:] = weights
-        self.model.avg_domain_weights[:] = (self.model.avg_domain_weights * (self.model.update_counter  - 1) + weights) / self.model.update_counter
+        self.model.train_domain_weights[:] = weights.float()
+        self.model.avg_domain_weights[:] = (self.model.avg_domain_weights * (self.model.update_counter - 1) + weights) / self.model.update_counter
 
     def read_weights(self):
         return self.model.train_domain_weights.clone()
 
     def set_attributes(self, **kwargs):
         for k, v in kwargs.items():
-           setattr(self, k, v)
+            setattr(self, k, v)
 
     def create_optimizer(self):
         self.optimizer = super().create_optimizer()
 
-        optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
+        optimizer_cls, _ = Trainer.get_optimizer_cls_and_kwargs(self.args)
         if optimizer_cls.__name__ == "Adafactor":
             self.optimizer.beta1 = self.args.adam_beta1
             for param_group in self.optimizer.param_groups:
@@ -201,7 +198,6 @@ class DoReMiTrainer(Trainer):
             )
         return self.lr_scheduler
 
-
     def compute_loss(self, model, inputs, return_outputs=False, return_pertoken_losses=False):
         """
         How the loss is computed by Trainer. By default, all models return the loss in the first element.
@@ -213,8 +209,7 @@ class DoReMiTrainer(Trainer):
         else:
             labels = None
 
-        if return_pertoken_losses:
-            inputs['return_pertoken_losses'] = True
+        inputs['return_pertoken_losses'] = return_pertoken_losses
 
         outputs = model(**inputs)
         # Save past state if it exists
@@ -238,15 +233,11 @@ class DoReMiTrainer(Trainer):
 
         if return_outputs:
             return (loss, outputs)
-        elif return_pertoken_losses:
-            return (loss,
-                    outputs['pertoken_loss'],
-                    outputs['reference_pertoken_loss'],
-                    outputs['token_mask'])
         else:
             return loss
 
     def update_domain_weights(self, scores, scores_mask, domain_ids):
+        wandb_log_dict = {}
         train_domain_weights = self.read_weights()
 
         scores = scores.detach()
@@ -262,21 +253,28 @@ class DoReMiTrainer(Trainer):
                 else:
                     curr_domain_scores = self.model.perdomain_scores[domain_id]
                 perdomain_scores.append(curr_domain_scores)
-            self.model.perdomain_scores[:] = torch.tensor(perdomain_scores)
+            self.model.perdomain_scores[:] = torch.tensor(perdomain_scores).float()
             log_new_train_domain_weights = torch.log(train_domain_weights) + self.args.reweight_eta * self.model.perdomain_scores
-            new_train_domain_weights = nn.functional.softmax(log_new_train_domain_weights, dim=0)
-            train_domain_weights = (1-self.args.reweight_eps) * new_train_domain_weights + self.args.reweight_eps / len(new_train_domain_weights)
+            log_new_train_domain_weights = log_new_train_domain_weights - torch.logsumexp(log_new_train_domain_weights, dim=0)
+            train_domain_weights = (1-self.args.reweight_eps) * torch.exp(log_new_train_domain_weights) + self.args.reweight_eps / len(log_new_train_domain_weights)
             self.write_weights(train_domain_weights)
         else:
             raise ValueError(f"DoReMi optimizer {self.args.doremi_optimizer} not supported")
 
-        wandb_log_dict = {}
-        for domain_idx in range(len(new_train_domain_weights)):
+        for domain_idx in range(len(train_domain_weights)):
+            domain_mask = (domain_ids == domain_idx)
+            perdomain_scores_mask = scores_mask[domain_mask]
+            if domain_mask.sum() > 0:
+                curr_domain_excess = scores[domain_mask][perdomain_scores_mask].mean()
+            else:
+                curr_domain_excess = torch.tensor(0.0)
+
             domain_name = self.domain_list[domain_idx]
             wandb_log_dict[f'avg_domain_weights/{domain_name}'] = self.model.avg_domain_weights[domain_idx].item()
             wandb_log_dict[f'train_domain_weights/{domain_name}'] = self.model.train_domain_weights[domain_idx].item()
             wandb_log_dict[f'perdomain_scores/{domain_name}'] = self.model.perdomain_scores[domain_idx].item()
-        wandb_log_dict[f'max_domain_id'] = domain_ids.max().item()
+            wandb_log_dict[f'perdomain_excess/{domain_name}'] = curr_domain_excess.float().item()
+        wandb_log_dict['max_domain_id'] = domain_ids.max().item()
         wandb.log(wandb_log_dict, commit=False)
 
     def training_step(self, model, inputs):
@@ -306,44 +304,46 @@ class DoReMiTrainer(Trainer):
 
         if self.args.reweight_domains:
             with self.compute_loss_context_manager():
-                loss, pertoken_loss, reference_pertoken_loss, token_mask = self.compute_loss(model, inputs, return_pertoken_losses=True)
+                loss, outputs = self.compute_loss(model, inputs, return_outputs=True, return_pertoken_losses=True)
+                pertoken_loss = outputs.pertoken_loss
+                reference_pertoken_loss = outputs.reference_pertoken_loss
+                token_mask = outputs.token_mask
                 excess_loss = pertoken_loss - reference_pertoken_loss
 
             if self.is_local_process_zero():
-                with torch.no_grad():
-                    gathered_excess_losses = [
-                            torch.zeros_like(excess_loss) for _ in range(self.args.world_size)
-                            ]
-                    dist.gather(excess_loss, gathered_excess_losses, dst=0)
-                    gathered_excess_losses = torch.cat(gathered_excess_losses, dim=0)
+                gathered_excess_losses = [
+                        torch.zeros_like(excess_loss) for _ in range(self.args.world_size)
+                        ]
+                dist.gather(excess_loss, gathered_excess_losses, dst=0)
+                gathered_excess_losses = torch.cat(gathered_excess_losses, dim=0)
 
-                    gathered_token_mask = [
-                            torch.zeros_like(token_mask) for _ in range(self.args.world_size)
-                            ]
-                    dist.gather(token_mask, gathered_token_mask, dst=0)
-                    gathered_token_mask = torch.cat(gathered_token_mask, dim=0)
+                gathered_token_mask = [
+                        torch.zeros_like(token_mask) for _ in range(self.args.world_size)
+                        ]
+                dist.gather(token_mask, gathered_token_mask, dst=0)
+                gathered_token_mask = torch.cat(gathered_token_mask, dim=0)
 
-                    gathered_domain_id = [
-                            torch.zeros_like(inputs['domain_ids']) for _ in range(self.args.world_size)
-                            ]
-                    dist.gather(inputs['domain_ids'], gathered_domain_id, dst=0)
-                    gathered_domain_id = torch.cat(gathered_domain_id, dim=0)
+                gathered_domain_id = [
+                        torch.zeros_like(inputs['domain_ids']) for _ in range(self.args.world_size)
+                        ]
+                dist.gather(inputs['domain_ids'], gathered_domain_id, dst=0)
+                gathered_domain_id = torch.cat(gathered_domain_id, dim=0)
 
-                    self.pertoken_scores.append(gathered_excess_losses.detach())
-                    self.token_masks.append(gathered_token_mask.detach())
-                    self.domain_ids.append(gathered_domain_id.detach())
+                self.pertoken_scores.append(gathered_excess_losses.detach())
+                self.token_masks.append(gathered_token_mask.detach())
+                self.domain_ids.append(gathered_domain_id.detach())
 
-                    if len(self.pertoken_scores) == self.args.gradient_accumulation_steps:
-                        pertoken_scores = torch.cat(self.pertoken_scores, dim=0)
-                        token_masks = torch.cat(self.token_masks, dim=0).bool()
-                        domain_ids = torch.cat(self.domain_ids, dim=0)
+                if len(self.pertoken_scores) == self.args.gradient_accumulation_steps:
+                    pertoken_scores = torch.cat(self.pertoken_scores, dim=0)
+                    token_masks = torch.cat(self.token_masks, dim=0).bool()
+                    domain_ids = torch.cat(self.domain_ids, dim=0)
 
-                        # update domain weights
-                        self.update_domain_weights(pertoken_scores, token_masks, domain_ids)
+                    # update domain weights
+                    self.update_domain_weights(pertoken_scores, token_masks, domain_ids)
 
-                        self.pertoken_scores = []
-                        self.token_masks = []
-                        self.domain_ids = []
+                    self.pertoken_scores = []
+                    self.token_masks = []
+                    self.domain_ids = []
             else:
                 dist.gather(excess_loss, dst=0)
                 dist.gather(token_mask, dst=0)
@@ -351,21 +351,24 @@ class DoReMiTrainer(Trainer):
 
             if self.args.doremi_optimizer == 'doremiv1':
                 # compute the rescaled loss, divide by domain weights
-                train_domain_weights = self.read_weights().to(pertoken_loss.device)
+                train_domain_weights = self.read_weights().to(pertoken_loss.device).float()
+
                 # if doing non-uniform sampling, normalize by inverse sampling weight
                 train_domain_weights = train_domain_weights / self.sampling_weights.to(train_domain_weights.device)
                 train_domain_weights = train_domain_weights / train_domain_weights.sum()
                 curr_domain_weights = train_domain_weights[inputs['domain_ids']].unsqueeze(-1).expand_as(pertoken_loss).detach()
+
                 curr_domain_weights = curr_domain_weights * token_mask
-                normalizer = curr_domain_weights.sum()
+
+                # renormalize
+                normalizer = curr_domain_weights.detach().sum()
                 # gather normalizer across GPUs
-                dist.all_reduce(normalizer, op=torch.distributed.ReduceOp.SUM) 
+                dist.all_reduce(normalizer, op=torch.distributed.ReduceOp.SUM)
                 # scale by world size because DDP averages gradients
-                normalizer = normalizer / self.args.world_size
+                normalizer = torch.clip(normalizer, min=1e-10) / self.args.world_size
 
                 token_mask = token_mask.detach().type(pertoken_loss.dtype)
-                curr_domain_weights = curr_domain_weights / normalizer
-                loss = (pertoken_loss * curr_domain_weights.detach()).sum()
+                loss = (pertoken_loss * curr_domain_weights.detach()).sum() / normalizer
             else:
                 raise ValueError(f"doremi_optimizer {self.args.doremi_optimizer} is not supported")
         else:
@@ -398,7 +401,7 @@ class DoReMiTrainer(Trainer):
         if self.model_init is not None:
             # Seed must be set before instantiating the model when using model_init.
             enable_full_determinism(self.args.seed) if self.args.full_determinism else set_seed(self.args.seed)
-            self.model = self.call_model_init(trial)
+            self.model = self.call_model_init(None)
             model_reloaded = True
             # Reinitializes optimizer and scheduler
             self.optimizer, self.lr_scheduler = None, None
@@ -419,18 +422,17 @@ class DoReMiTrainer(Trainer):
                 self._move_model_to_device(self.model, self.args.device)
             self.model_wrapped = self.model
 
-    def get_all_checkpoints(self):
-        folder = self.args.output_dir
+    def get_all_checkpoints(self, folder):
         _re_checkpoint = re.compile(r"^" + PREFIX_CHECKPOINT_DIR + r"\-(\d+)$")
-        content = os.listdir(folder)
+        folder = Path(folder)
         checkpoints = [
-            os.path.join(folder, path)
-            for path in content
-            if _re_checkpoint.search(path) is not None and os.path.isdir(os.path.join(folder, path))
+            path
+            for path in folder.iterdir()
+            if _re_checkpoint.search(path.name) is not None and path.is_dir()
         ]
-        checkpoints = list(sorted(checkpoints, key=lambda x: int(_re_checkpoint.search(x).groups()[0])))
+        checkpoints = list(sorted(checkpoints, key=lambda x: int(x.name.split('-')[1])))
+        checkpoints = [str(path) for path in checkpoints]
         return checkpoints
-
 
     def evaluation_loop(
         self,
@@ -484,8 +486,6 @@ class DoReMiTrainer(Trainer):
         model.eval()
 
         self.callback_handler.eval_dataloader = dataloader
-        # Do this before wrapping.
-        eval_dataset = getattr(dataloader, "dataset", None)
 
         if is_torch_tpu_available():
             dataloader = pl.ParallelLoader(dataloader, [args.device]).per_device_loader(args.device)
@@ -495,9 +495,9 @@ class DoReMiTrainer(Trainer):
 
         loss_fn = nn.CrossEntropyLoss(reduction='sum')
 
-        losses = torch.zeros(len(self.domain_list)).cuda()
-        tokencounts = torch.zeros(len(self.domain_list)).cuda()
-        examplecounts = torch.zeros(len(self.domain_list)).cuda()
+        losses = torch.zeros(len(self.eval_domain_list)).cuda()
+        tokencounts = torch.zeros(len(self.eval_domain_list)).cuda()
+        examplecounts = torch.zeros(len(self.eval_domain_list)).cuda()
         observed_num_examples = 0
         # Main evaluation loop
         for step, inputs in tqdm(enumerate(dataloader)):
@@ -511,7 +511,6 @@ class DoReMiTrainer(Trainer):
 
             # Prediction step
             loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
-            inputs_decode = self._prepare_input(inputs["input_ids"]) if args.include_inputs_for_metrics else None
             domain_ids = inputs["domain_ids"].to(loss.device)
 
             if is_torch_tpu_available():
@@ -521,10 +520,10 @@ class DoReMiTrainer(Trainer):
                 logits = logits[0]
 
             # compute losses per domain
-            for domain_idx, domain_name in enumerate(self.domain_list):
+            for domain_idx, domain_name in enumerate(self.eval_domain_list):
                 domain_mask = (domain_ids == domain_idx)
                 examplecounts[domain_idx] = examplecounts[domain_idx] + domain_mask.sum()
-                
+
                 if domain_mask.sum() > 0:
                     domain_labels = labels[domain_mask]
                     domain_preds = logits[domain_mask]
@@ -539,11 +538,11 @@ class DoReMiTrainer(Trainer):
 
         # losses/preds/labels on CPU (final containers)
         per_domain_losses = {domain_name: losses[domain_idx].item()
-                             for domain_idx, domain_name in enumerate(self.domain_list) if tokencounts[domain_idx] > 0} 
+                             for domain_idx, domain_name in enumerate(self.eval_domain_list) if tokencounts[domain_idx] > 0}
         per_domain_tokencounts = {domain_name: tokencounts[domain_idx].item()
-                                  for domain_idx, domain_name in enumerate(self.domain_list) if tokencounts[domain_idx] > 0} 
+                                  for domain_idx, domain_name in enumerate(self.eval_domain_list) if tokencounts[domain_idx] > 0}
         per_domain_examplecounts = {domain_name: examplecounts[domain_idx].item()
-                                    for domain_idx, domain_name in enumerate(self.domain_list) if tokencounts[domain_idx] > 0} 
+                                    for domain_idx, domain_name in enumerate(self.eval_domain_list) if tokencounts[domain_idx] > 0}
 
         # normalize
         per_domain_losses = {domain_name: per_domain_losses[domain_name] / per_domain_tokencounts[domain_name]
@@ -562,4 +561,182 @@ class DoReMiTrainer(Trainer):
             if not key.startswith(f"{metric_key_prefix}_"):
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
 
-        return EvalLoopOutput(predictions=None, label_ids=None, metrics=metrics, num_samples=sum(list(per_domain_examplecounts.values()))) 
+        return EvalLoopOutput(predictions=None, label_ids=None, metrics=metrics, num_samples=sum(list(per_domain_examplecounts.values())))
+
+    def evaluate_fewshot(self, dataset_names, ignore_keys=None, metric_key_prefix="eval", num_shots=1, max_samples=None):
+        # memory metrics - must set up as early as possible
+        self._memory_tracker.start()
+
+        max_token_length = self.tokenizer.model_max_length
+        # prepare tokenizer
+        tokenizer = self.tokenizer
+        tokenizer_padding_side = tokenizer.padding_side
+        tokenizer_truncation_side = tokenizer.truncation_side
+        tokenizer.padding_side = 'left'
+        tokenizer.truncation_side = 'left'
+
+        all_metrics = {}
+
+        for dataset_name in dataset_names:
+            logger.info(f"Evaluating {dataset_name}...")
+
+            # we pass in num_shots because some datasets are only 0 shot
+            data_dict = get_eval_dataset(dataset_name, num_shots=num_shots, seed=self.args.seed)
+
+            dataset_train = data_dict['dataset_train']
+            dataset_val = data_dict['dataset_val']
+            top_k = data_dict['top_k']
+            top_p = data_dict['top_p']
+            temperature = data_dict['temperature']
+            prompt_transform = data_dict['prompt_transform']
+            eval_func = data_dict['eval_func']
+            pred_postprocess_func = data_dict['pred_postprocess_func']
+            num_shots = data_dict['num_shots']
+            max_new_tokens = data_dict['max_new_tokens']
+            shuffle_train = data_dict['shuffle_train']
+
+            # use training set as few-shot examples, shuffle first
+            if dataset_train is not None and shuffle_train:
+                dataset_train = dataset_train.shuffle(seed=self.args.seed)
+
+            # select first num examples
+            if max_samples is not None:
+                dataset_val = dataset_val.select(range(max_samples))
+
+            # shard the dataset
+            if dataset_train is not None:
+                dataset_train = dataset_train.shard(num_shards=self.args.world_size, index=self.args.process_index)
+            dataset_val = dataset_val.shard(num_shards=self.args.world_size, index=self.args.process_index)
+
+            def few_shot_generator(ds=None):
+                while True:
+                    curr_exs = []
+                    if num_shots == 0:
+                        yield curr_exs
+                        continue
+
+                    for ex in ds:
+                        curr_exs.append(ex)
+
+                        if len(curr_exs) == num_shots:
+                            yield curr_exs
+                            curr_exs = []
+
+            fewshot_train_dataset = IterableDataset.from_generator(
+                    few_shot_generator, gen_kwargs={'ds': dataset_train})
+
+            def prompt_generator(fewshot_train_ds, val_ds):
+                for ex, context_exs in zip(val_ds, fewshot_train_ds):
+                    ex_dict = prompt_transform(ex, context_exs)
+                    yield ex_dict
+
+            def data_collator(batch):
+                # self.tokenizer is the HF tokenizer
+                # tokenizer is either HF tokenizer or SPM tokenizer
+                collated_batch = {k: [f[k] for f in batch] for k in batch[0].keys()}
+                # will do left truncation
+                tokenized = tokenizer(collated_batch['prompt'], padding=False, truncation=True)
+
+                collated_batch['input_ids'] = torch.tensor(tokenized['input_ids'])[:, -(max_token_length-max_new_tokens):]
+                collated_batch['attention_mask'] = torch.tensor(tokenized['attention_mask'])[:, -(max_token_length-max_new_tokens):]
+                return collated_batch
+
+            fewshot_val_dataset = IterableDataset.from_generator(
+                    prompt_generator, gen_kwargs={'fewshot_train_ds': fewshot_train_dataset, 'val_ds': dataset_val})
+
+            dataloader = DataLoader(
+                    fewshot_val_dataset,
+                    batch_size=1,  # batch size 1 avoids left padding
+                    collate_fn=data_collator,
+                    num_workers=1,
+                    pin_memory=self.args.dataloader_pin_memory)
+
+            # prepare model
+            args = self.args
+            model = self._wrap_model(self.model, training=False, dataloader=dataloader)
+
+            # if full fp16 or bf16 eval is wanted and this ``evaluation`` or ``predict`` isn't called
+            # while ``train`` is running, cast it to the right dtype first and then put on device
+            if not self.is_in_train:
+                if args.fp16_full_eval:
+                    model = model.to(dtype=torch.float16, device=args.device)
+                elif args.bf16_full_eval:
+                    model = model.to(dtype=torch.bfloat16, device=args.device)
+            model.eval()
+
+            # TODO put this somewhere else?
+            model.config.pad_token_id = model.config.eos_token_id
+
+            num_correct = torch.tensor(0.0).cuda()
+            num_examples = torch.tensor(0.0).cuda()
+            # fewshot eval loop
+            for step, inputs in tqdm(enumerate(dataloader)):
+                num_examples += len(inputs['input_ids'])
+                with torch.no_grad():
+                    with self.compute_loss_context_manager():
+                        gen_tokens = model.generate(
+                                input_ids=inputs['input_ids'].cuda(),
+                                max_length=inputs['input_ids'].shape[1]+max_new_tokens,
+                                top_k=top_k,
+                                top_p=top_p,
+                                temperature=temperature)
+
+                gen_text = tokenizer.batch_decode(gen_tokens[:, inputs['input_ids'].shape[1]:], skip_special_tokens=True)
+
+                for prompt, pred, answer in zip(inputs['prompt'], gen_text, inputs['answer']):
+                    pred = pred_postprocess_func(pred)
+                    if eval_func(answer, pred, prompt,
+                                 model=model,
+                                 tokenizer=tokenizer,
+                                 inputs=inputs,
+                                 trainer=self):
+                        num_correct += 1
+                        print(f"\033[0;32m CORRECT \033[0m: {prompt}\033[0;32m{pred}\033[0m |  Answer: {answer}\n")
+                    else:
+                        print(f"\033[91m INCORRECT \033[0m: {prompt}\033[91m{pred}\033[0m |  Answer: {answer}\n")
+
+            torch.distributed.all_reduce(num_correct)
+            torch.distributed.all_reduce(num_examples)
+            accuracy = 100 * (num_correct / num_examples)
+
+            metrics = {'accuracy': accuracy, 'num_correct': num_correct, 'num_examples': num_examples}
+
+            # To be JSON-serializable, we need to remove numpy types or zero-d tensors
+            metrics = denumpify_detensorize(metrics)
+
+            # Prefix all keys with metric_key_prefix + '_'
+            for key in list(metrics.keys()):
+                if not key.startswith(f"{metric_key_prefix}_{num_shots}-shot:{dataset_name}"):
+                    metrics[f"{metric_key_prefix}_{num_shots}-shot:{dataset_name}:{key}"] = metrics.pop(key)
+
+            all_metrics.update(metrics)
+
+        # comput average metrics across datasets
+        avg_metrics = defaultdict(list)
+        for key in all_metrics:
+            if key.endswith('accuracy'):
+                avg_metrics['accuracy'].append(all_metrics[key])
+            if key.endswith('num_correct'):
+                avg_metrics['num_correct'].append(all_metrics[key])
+            if key.endswith('num_examples'):
+                avg_metrics['num_examples'].append(all_metrics[key])
+
+        avg_metrics = {key: np.mean(val_list) for key, val_list in avg_metrics.items()}
+
+        for key in avg_metrics.keys():
+            all_metrics[f"{metric_key_prefix}_{num_shots}-shot:avg:{key}"] = avg_metrics[key]
+
+        # gather and compute metrics
+        output = EvalLoopOutput(predictions=None, label_ids=None, metrics=all_metrics, num_samples=None)
+
+        self.log(output.metrics)
+
+        self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, output.metrics)
+
+        self._memory_tracker.stop_and_update_metrics(output.metrics)
+
+        # restore tokenizer settings
+        tokenizer.padding_side = tokenizer_padding_side
+        tokenizer.truncation_side = tokenizer_truncation_side
+
+        return output.metrics

@@ -12,6 +12,7 @@ import numpy as np
 from datasets import Features, Sequence, Value
 import shutil
 from itertools import chain
+from tokenizers.processors import TemplateProcessing
 
 
 def get_transform(tokenizer, max_length, domain_id, seed=None):
@@ -49,6 +50,7 @@ def main():
     parser.add_argument('--domain', type=str, default='common_crawl')
     parser.add_argument('--subset', type=int, default=0)
     parser.add_argument('--num_subsets', type=int, default=95)
+    parser.add_argument('--num_validation_examples', type=int, default=1000000)
     parser.add_argument('--max_length', type=int, default=2048)
     parser.add_argument('--nproc', type=int, default=8)
     parser.add_argument('--tokenizer', type=str, default='togethercomputer/RedPajama-INCITE-Base-7B-v0.1')
@@ -56,8 +58,9 @@ def main():
     parser.add_argument('--seed', type=int, default=111)
     args = parser.parse_args()
 
-    output_dir = Path(args.output_dir) / args.domain / str(args.subset)
-    if output_dir.exists():
+    output_dir_train = Path(args.output_dir) / 'train' / args.domain / str(args.subset)
+    output_dir_val = Path(args.output_dir) / 'validation' / args.domain / str(args.subset)
+    if output_dir_train.exists() and output_dir_val.exists():
         print("Already done, skipping")
         return
 
@@ -90,14 +93,26 @@ def main():
     # load dataset
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, use_fast=True)
     tokenizer.pad_token = tokenizer.eos_token
+    # add a separator token
+    tokenizer._tokenizer.post_processor = TemplateProcessing(
+            single="$A "+tokenizer.eos_token,
+            special_tokens=[(tokenizer.eos_token, tokenizer.eos_token_id)])
     transform = get_transform(tokenizer, args.max_length, DOMAIN_TO_IDX[args.domain], seed=args.seed)
     if args.domain not in {'book', 'github'}:
         ds = load_dataset('json',
                           data_files=data_files,
                           cache_dir=args.cache_dir,
                           num_proc=args.nproc)['train']
+        # split into train and validation
+        if args.num_validation_examples > len(ds):
+            num_validation_examples = len(ds) // 20
+        else:
+            num_validation_examples = args.num_validation_examples
+        ds_dict = ds.train_test_split(test_size=num_validation_examples, shuffle=True, seed=args.seed)
 
-        ds = ds.map(transform, batched=True, remove_columns=ds.column_names, num_proc=args.nproc)
+
+        ds_train = ds['train'].map(transform, batched=True, remove_columns=ds.column_names, num_proc=args.nproc)
+        ds_val = ds['test'].map(transform, batched=True, remove_columns=ds.column_names, num_proc=args.nproc)
     else:
         def data_gen(data_files):
             for data_file in data_files:
@@ -111,17 +126,27 @@ def main():
                             # sometimes there is a json read error
                             pass
         ds = Dataset.from_generator(data_gen, gen_kwargs={'data_files': data_files}, num_proc=args.nproc)
+        # split into train and validation
+        if args.num_validation_examples > len(ds):
+            num_validation_examples = len(ds) // 20
+        else:
+            num_validation_examples = args.num_validation_examples
+        ds = ds.train_test_split(test_size=num_validation_examples, shuffle=True, seed=args.seed)
+
         if args.domain == 'book':
             # books are very long
             batch_size = 10
         else:
             batch_size = 1000
 
-        ds = ds.map(transform, batched=True, batch_size=batch_size, remove_columns=['text'], num_proc=args.nproc)
+        ds_train = ds['train'].map(transform, batched=True, batch_size=batch_size, remove_columns=['text'], num_proc=args.nproc)
+        ds_val = ds['test'].map(transform, batched=True, batch_size=batch_size, remove_columns=['text'], num_proc=args.nproc)
 
     # save dataset
-    output_dir.parent.mkdir(parents=True, exist_ok=True)
-    ds.save_to_disk(output_dir, max_shard_size='1GB', num_proc=args.nproc)
+    for output_dir, ds in zip([output_dir_train, output_dir_val], [ds_train, ds_val]):
+        output_dir.parent.mkdir(parents=True, exist_ok=True)
+        ds.save_to_disk(output_dir, max_shard_size='1GB', num_proc=args.nproc)
+
     shutil.rmtree(str(Path(args.cache_dir) / 'downloads'))
     shutil.rmtree(str(Path(args.cache_dir) / 'json'))
     ds.cleanup_cache_files()

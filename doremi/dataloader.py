@@ -1,25 +1,13 @@
 from pathlib import Path
 from collections import Counter
-import pickle
 import random
 from copy import deepcopy
-from multiprocessing import Array
-from itertools import cycle, chain
-from functools import partial
-import uuid
 import numpy as np
 import torch
-from datasets import load_dataset, Dataset, IterableDataset
-from datasets.info import DatasetInfo
-from datasets.iterable_dataset import ExamplesIterable, RandomlyCyclingMultiSourcesExamplesIterable
-from transformers import AutoTokenizer, default_data_collator
-import torch.distributed as dist
-from tqdm import tqdm
-import math
-from datasets.filesystems import _reset_fsspec_lock
+from datasets import IterableDataset
+from datasets.iterable_dataset import RandomlyCyclingMultiSourcesExamplesIterable
 from datasets.utils.logging import get_logger
 from datasets import load_from_disk
-import shutil
 
 logger = get_logger(__name__)
 
@@ -30,28 +18,27 @@ DEFAULT_SEED=111
 class UpdatableRandomlyCyclingMultiSourcesExamplesIterable(
         RandomlyCyclingMultiSourcesExamplesIterable):
 
-    def __init__(self, ex_iterables, generator, probabilities=None, probabilities_file=None, stopping_strategy="all_exhausted"):
+    def __init__(self, ex_iterables, generator, probabilities=None, probabilities_handle=None, stopping_strategy="all_exhausted"):
         '''
         probabilities: vector of static probabilities over training
-        probabilities_file: tmp file to store dynamically changing probabilities
+        probabilities_handle: handle to domain weights buffer in model params
         '''
         super().__init__(ex_iterables, generator, stopping_strategy=stopping_strategy)
-        self.probabilities_file = probabilities_file
+        self.probabilities_handle = probabilities_handle
         self.probabilities = probabilities
 
     @staticmethod
-    def _iter_random_indices(rng, num_sources, probabilities_file=None, probabilities=None, random_batch_size=RANDOM_BATCH_SIZE):
+    def _iter_random_indices(rng, num_sources, probabilities_handle=None, probabilities=None, random_batch_size=RANDOM_BATCH_SIZE):
         while True:
             # read domain weights
-            if probabilities_file is not None:
-                with open(probabilities_file, 'rb') as f:
-                    probabilities = pickle.load(f)
+            if probabilities_handle is not None:
+                probabilities = probabilities_handle.detach().cpu().numpy()
 
             yield from (int(i) for i in rng.choice(num_sources, size=random_batch_size, p=probabilities))
 
     def _give_indice_iterator(self):
         rng = deepcopy(self.generator)
-        return self._iter_random_indices(rng, len(self.ex_iterables), probabilities_file=self.probabilities_file, probabilities=self.probabilities)
+        return self._iter_random_indices(rng, len(self.ex_iterables), probabilities_handle=self.probabilities_handle, probabilities=self.probabilities)
 
     def shard_data_sources(self, shard_indices):
         return self
@@ -65,7 +52,7 @@ class UpdatableRandomlyCyclingMultiSourcesExamplesIterable(
         return self
 
 
-def interleave_datasets(datasets, probabilities=None, probabilities_file=None, seed=None, stopping_strategy='all_exhausted'):
+def interleave_datasets(datasets, probabilities=None, probabilities_handle=None, seed=None, stopping_strategy='all_exhausted'):
     iterable_datasets = []
     for dataset in datasets:
         if not isinstance(dataset, IterableDataset):
@@ -78,35 +65,10 @@ def interleave_datasets(datasets, probabilities=None, probabilities_file=None, s
     generator = np.random.default_rng(seed)
     ex_iterable = UpdatableRandomlyCyclingMultiSourcesExamplesIterable(
             ex_iterables, generator=generator,
-            probabilities=probabilities, probabilities_file=probabilities_file,
+            probabilities=probabilities, probabilities_handle=probabilities_handle,
             stopping_strategy=stopping_strategy)
 
     return IterableDataset(ex_iterable=ex_iterable)
-
-
-def get_dataset(pile_dir, domain_ids_dir, cache_dir=None, split='train'):
-    # initialize streaming datasets from pile_dir
-    pile_dir = Path(pile_dir)
-    domain_ids_split_dir = Path(domain_ids_dir) / split
-    if split == 'train':
-        data_files = [str(pile_dir / f"{subset}.jsonl.zst") for subset in PILE_SUBSETS]
-        domain_ids = [np.load(domain_ids_split_dir / f"{subset}_domain_ids.npy") for subset in PILE_SUBSETS]
-    elif split == 'validation':
-        data_files = [str(pile_dir / "val.jsonl.zst")]
-        domain_ids = [np.load(domain_ids_split_dir / f"{split}_domain_ids.npy")]
-    else:
-        data_files = [str(pile_dir / f"test.jsonl.zst")]
-        domain_ids = [np.load(domain_ids_split_dir / f"{split}_domain_ids.npy")]
-
-
-    ds_ls = []
-    for data_file in data_files:
-        ds = load_dataset('json',
-                          data_files=[data_file],
-                          cache_dir=cache_dir,
-                          streaming=True)['train']
-        ds_ls.append(ds)
-    return ds_ls, domain_ids
 
 
 def simulate_data_skip_per_domain(num_skip_examples, probabilities, rng, random_batch_size=RANDOM_BATCH_SIZE):
@@ -132,10 +94,16 @@ def determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_na
     return domain_name_to_skip_num
 
 
-def skippable_data_gen(shards, num_skip_examples=0, loop=True, seed=111, shuffle=False):
+def skippable_data_gen(shards, num_skip_examples=0, loop=True, seed=111, shuffle=False, keep_in_memory=False):
 
     def get_shard_ds(shard_dir, num_skipped, seed, shuffle):
-        shard = load_from_disk(dataset_path=str(shard_dir))
+        # TODO hack:
+        if keep_in_memory:
+            curr_keep_in_memory = (hash(str(shard_dir)) % 2 == 0)
+        else:
+            curr_keep_in_memory = False
+
+        shard = load_from_disk(dataset_path=str(shard_dir), keep_in_memory=curr_keep_in_memory)
         if shuffle:
             shard = shard.shuffle(seed=seed)
         if num_skipped < num_skip_examples:
@@ -179,7 +147,8 @@ def get_pile_datasets(
         domain_names=None,
         num_skip_examples=0,
         shuffle=False,
-        shard_reversal=False):
+        shard_reversal=False,
+        keep_in_memory=False):
 
     domain_name_to_skip_num = determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_names)
 
@@ -189,9 +158,9 @@ def get_pile_datasets(
     for domain_dir in preprocessed_dir.iterdir():
         if split == 'train':
             shards = list(domain_dir.iterdir())
-            if shard_reversal:
-                curr_shards = list(reversed(shards))
             random.Random(seed).shuffle(shards)
+            if shard_reversal:
+                shards = list(reversed(shards))
         else:
             shards = [domain_dir]
         ds = IterableDataset.from_generator(
@@ -217,7 +186,8 @@ def get_perdomain_datasets(
         domain_names=None,
         num_skip_examples=0,
         shuffle=False,
-        shard_reversal=False):
+        shard_reversal=False,
+        keep_in_memory=False):
     '''
     Returns a dictionary from domain name to IterableDataset.
     '''
@@ -227,7 +197,7 @@ def get_perdomain_datasets(
     if split is not None and (preprocessed_dir / split).exists():
         preprocessed_dir = preprocessed_dir / split
     else:
-        logger.warn(f"No split used or split directory not found: using same data for all splits.")
+        logger.warn("No split used or split directory not found: using same data for all splits.")
 
     domains = list(sorted(domain_weights_dict.keys()))
 
@@ -239,10 +209,10 @@ def get_perdomain_datasets(
             curr_shards = [domain_dir]
         else:
             curr_shards = list(domain_dir.iterdir())
-            if shard_reversal:
-                curr_shards = list(reversed(curr_shards))
             # shuffle shard order
             random.Random(seed).shuffle(curr_shards)
+            if shard_reversal:
+                curr_shards = list(reversed(curr_shards))
 
         ds = IterableDataset.from_generator(
                 skippable_data_gen,
@@ -250,7 +220,8 @@ def get_perdomain_datasets(
                             'num_skip_examples': domain_name_to_skip_num[domain],
                             'loop': (split == 'train'),
                             'seed': seed,
-                            'shuffle': shuffle}
+                            'shuffle': shuffle,
+                            'keep_in_memory': keep_in_memory}
                 )
         all_ds[domain] = ds
         seed += 1
@@ -266,12 +237,13 @@ def get_preprocessed_mixed_dataset(
         seed=DEFAULT_SEED,
         max_samples=None,
         add_domain_id=False,
-        tmp_file=None,
+        domain_weight_buffer_handle=None,
         tokenizer=None,
         no_interleave=False,
         shuffle=False,
         num_skip_examples=0,
-        shard_reversal=False):
+        shard_reversal=False,
+        keep_in_memory=False):
     '''preprocessed_dir: has the following format
                first level: domain directories
                second level: shards for each domain. number of shards per domain should be the same.
@@ -283,7 +255,7 @@ def get_preprocessed_mixed_dataset(
        seed: int (controls ordering of data shards)
        max_samples: int (limit for number of examples)
        add_domain_id: add domain id to the bath on the fly
-       tmp_file: filename for saving domain weights to disk during doremi (otherwise, we keep the domain weights as a buffer saved along with the model)
+       domain_weight_buffer_handle: handle to the domain weights in the model params 
        tokenizer: huggingface tokenizer
        no_interleave: don't interleave the domains - just iterate through the data in order
        shuffle: on-the-fly shuffle with a buffer size 100k
@@ -295,16 +267,7 @@ def get_preprocessed_mixed_dataset(
     domain_weights = np.asarray([domain_weights_dict[domain_name] for domain_name in domain_names])
     domain_weights = domain_weights / domain_weights.sum()
 
-    # write domain weights to file if tmp_file is set
-    if tmp_file is not None:
-        probabilities_tmp_file = tmp_file
-
-        with open(str(probabilities_tmp_file), 'wb') as f:
-            pickle.dump(domain_weights, f)
-        probabilities = None
-    else:
-        probabilities = domain_weights
-        probabilities_tmp_file = None
+    probabilities = domain_weights
 
     # TODO: load pile with perdomain_datasets
     if dataset_name == 'pile':
@@ -317,7 +280,8 @@ def get_preprocessed_mixed_dataset(
                 domain_names=domain_names,
                 num_skip_examples=num_skip_examples,
                 shuffle=shuffle,
-                shard_reversal=shard_reversal)
+                shard_reversal=shard_reversal,
+                keep_in_memory=keep_in_memory)
     else:
         try:
             all_ds = get_perdomain_datasets(
@@ -330,7 +294,8 @@ def get_preprocessed_mixed_dataset(
                 domain_names=domain_names,
                 num_skip_examples=num_skip_examples,
                 shuffle=shuffle,
-                shard_reversal=shard_reversal)
+                shard_reversal=shard_reversal,
+                keep_in_memory=keep_in_memory)
         except Exception:
             raise ValueError(f"dataset_name {dataset_name} not implemented.")
 
@@ -364,7 +329,7 @@ def get_preprocessed_mixed_dataset(
         ds = interleave_datasets(
                 domain_ds_ls,
                 probabilities=probabilities,
-                probabilities_file=probabilities_tmp_file,
+                probabilities_handle=domain_weight_buffer_handle,
                 seed=seed)
 
     def take_data_generator(ds, max_samples):

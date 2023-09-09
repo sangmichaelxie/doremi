@@ -2,19 +2,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![arXiv](https://img.shields.io/badge/arXiv-2305.10429-00ff00.svg)](https://arxiv.org/abs/2305.10429)
 
-PyTorch implementation of DoReMi, an algorithm for optimizing data mixtures for language modeling datasets. Check out the [paper](https://arxiv.org/abs/2305.10429) for more details. This repo is currently in active development!
+PyTorch implementation of DoReMi, an algorithm for optimizing data mixtures for language modeling datasets. Check out the [paper](https://arxiv.org/abs/2305.10429) for more details.
 
 ![High-level overview of DoReMi.](doremi.gif)
 
-Note that there may be a few differences between this repo and the paper, which was developed at Google, namely:
-- PyTorch vs JAX
-- Subtle differences in model architecture
-- Tokenizers used (256k vocab size used in paper, while standard GPT2 tokenizer is 50k vocab size). This can siginificantly affect the data mixtures as calculated by token count.
-You should run DoReMi within your own specific training setup for the best results.
-
 ## Getting started
 
-To get started, please clone the repo, and install it:
+To get started, please clone the repo and install it:
 ```
 git clone git@github.com:/sangmichaelxie/doremi.git
 pip install -e doremi
@@ -22,14 +16,15 @@ cd doremi && bash scripts/setup_flash.sh
 ```
 
 All code should be run from the outermost `doremi` directory.
-Before you start, write paths to your cache directories, data directories, etc in a `constants.sh` file in the outer directory of this repo. You can also place any conda or virtualenv activation commands here. Here's an example of the contents of a `constants.sh` file:
+Before you start, write paths to your cache directories, data directories, etc in a `constants.sh` file in the outer directory of this repo. You can also place any conda or virtualenv activation commands here. Here's an example of the contents of a `constants.sh` file (provided as a file called `sample_constants.sh`):
 ```
 #!/bin/bash
 CACHE=/path/to/cache
 DOREMI_DIR=/path/to/this/repo
 PILE_DIR=/path/to/pile
-PREPROCESSED_PILE_DIR=/path/to/preprocessed  # will be created by scripts/run_filter_domains.sh
+PREPROCESSED_PILE_DIR=/path/to/preprocessed  # will be created by scripts/run_preprocess_pile.sh
 MODEL_OUTPUT_DIR=/path/to/model_output_dir
+WANDB_API_KEY=key  # Weights and Biases key for logging
 PARTITION=partition # for slurm
 mkdir -p ${CACHE}
 mkdir -p ${MODEL_OUTPUT_DIR}
@@ -38,18 +33,13 @@ source ${DOREMI_DIR}/venv/bin/activate  # if you installed doremi in venv
 
 Here is how to run the sample script for data preprocessing on The Pile, which separates the Pile data into domains and tokenizes it:
 ```
-bash scripts/run_filter_domains.sh
+bash scripts/run_preprocess_pile.sh
 ```
-Here is how to run baseline and DoReMi 280M models on preprocessed Pile data (tested on one node with 8 A100 GPUs):
+Here is a sample script to run 120M baseline, proxy, and main models (all 3 steps in the DoReMi pipeline), tested on one node with 8 A100 GPUs. This is a small version of the Pile experiments in the paper. The script will automatically run perplexity and few-shot evaluation:
 ```
-bash scripts/runs/run_pile_baseline280M.sh
+bash scripts/run_pile.sh
 ```
-To run evaluation on a validation split, append `eval` to the end of the training script (`bash scripts/runs/run_pile_baseline280M.sh eval`).
-After training a baseline model, we can run DoReMi:
-```
-bash scripts/runs/run_pile_doremi280M.sh
-```
-These scripts run for 200k steps, following the paper. The DoReMi run outputs domain weights in the `configs` directory with filename `<RUN_NAME>.json`. Note: so far, DoReMi has not been tested with gradient accumulation (although the code runs). If we accumulate the gradients for `k` steps, there will be `k-1` gradients computed against stale domain weights from the previous iteration (this problem doesn't exist for `k=1`).
+These scripts run for 200k steps, following the paper. The DoReMi run outputs domain weights in the `configs` directory with filename `<RUN_NAME>.json`. 
 
 ## Running DoReMi on your own dataset
 To run DoReMi on your own dataset, provide preprocessed (tokenized) data in the following format:
@@ -62,8 +52,27 @@ top_level/
     ...
 ```
 where each inner directory (e.g., `domain_name_1`) can be loaded via HuggingFace's `load_from_disk` method. If your data is in a different format, you can add a custom data loading function in `doremi/dataloader.py`.
-You will also need to write a config file and save it to `configs/` and write run scripts similar to `scripts/runs/run_pile_baseline280M.sh` and `scripts/runs/run_pile_doremi280M.sh` which refer to the config file. The config file specifies the mapping from domain name to mixture weight. The names do not have to be in order (DoReMi will always sort the domain names first to determine a fixed ordering) and the weights do not have to be normalized.
- 
+You will also need to write a config file and save it to `configs/` and write run scripts similar to `scripts/runs/run_pile_baseline120M.sh` and `scripts/runs/run_pile_doremi120M.sh` which refer to the config file. The config file specifies the mapping from domain name to mixture weight. The names do not have to be in order (DoReMi will always sort the domain names first to determine a fixed ordering) and the weights do not have to be normalized.
+
+## Tips and details
+- **Choice of reference domain weights**: In general, the reference domain weights are a way to express a prior over the importance of the domains. A reasonable default is to set the reference model's domain weights according to the size of each domain, which ensures that the small domains will not be overrepresented (and be overfit). If certain domains are particularly important, you can certainly increase its corresponding reference domain weight. Uniform domain weights could be used as the reference domain weights to avoid putting a prior on the domain weights, but iterated DoReMi will likely be needed (see below).
+- **Iterated DoReMi**: In some cases, you may need to run more than 1 round of DoReMi. To run iterated DoReMi, we train a new reference model using the optimized domain weights from the previous round. This helps especially if you start with suboptimal reference domain weights (such as uniform weights), where the reference model trained using those weights will also be suboptimal.
+- **Update rate for domain weights (`--reweight_eps`)**: The default setting used in the paper is 1, although this could be tuned for different datasets. Generally, we expect the domain weights during training to be somewhat noisy and the averaged domain weights to be mostly smooth.
+- **Choice of tokenizer**: We find that newer tokenizers (like NeoX) tend to give better model performance at smaller scales, so we suggest these over older tokenizers such as GPT2.
+- **Running on a subset of domains**: the default dataset loading code will only load the domains listed in the config file. Running on a subset of domains can be achieved by deleting the domain from the config file.
+- **Gradient accumulation**: Gradient accumulation should work, and in preliminary tests, the behavior is similar to the no-accumulation scenario. However, currently using accumulation in this implementation is not equivalent to no accumulation. If we accumulate the gradients for `k` steps, there will be `k-1` gradients computed against stale domain weights from the previous iteration (this problem doesn't exist for `k=1`).
+- **Multi-node training**: We currently don't support multi-node training.
+
+Note that there are a few differences between this repo and the paper, which was developed at Google, namely:
+- PyTorch vs JAX
+- Subtle differences in model architecture
+- Tokenizers used (256k vocab size used in paper, while standard open source tokenizers are around 50k vocab size). This can siginificantly affect the data mixtures as calculated by token count.
+You should run DoReMi within your own specific training setup for the best results.
+
+## Sample run results
+Below are results from one round of DoReMi on The Pile using 120M proxy and reference models (with `scripts/run_pile.sh`). We train a 120M model using the optimized weights and compare it to the baseline (gray). The two baselines represent two slightly different ways of calculating the baseline domain weights in the Pile (nopack counts the number of examples in each domain after padding each document to the context window length, whereas pack concatenates the documents within one domain first), which produce similar-performing models. The model trained with DoReMi domain weights reaches the baseline one-shot performance very early during training, within 50k steps (4x faster) across all tasks. The DoReMi model surpasses the baseline one-shot performance within 20k steps, has improved or comparable perplexity on 15/22 domains, and improves both uniformly averaged and worst-case perplexity across domains.
+![One-shot evaluation.](fewshot_120M_pile.png)
+
 If this was useful to you, please cite the [paper](https://arxiv.org/abs/2305.10429):
 ```
 @article{xie2023doremi,

@@ -89,6 +89,12 @@ class DataTrainingArguments:
     dataset_name: str = field(
         default='pile', metadata={"help": "Name of the dataset."}
     )
+    eval_dataset_dir: str = field(
+        default=None, metadata={"help": "Path to the eval dataset directory. Defaults to dataset_dir"}
+    )
+    eval_dataset_name: str = field(
+        default=None, metadata={"help": "Name of the eval dataset. Defaults to dataset_name."}
+    )
     max_train_samples: Optional[int] = field(
         default=None,
         metadata={
@@ -104,6 +110,14 @@ class DataTrainingArguments:
             "help": (
                 "For debugging purposes or quicker training, truncate the number of evaluation examples to this "
                 "value if set."
+            )
+        },
+    )
+    max_downstream_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": (
+                "For quicker downstream evaluation, limit the number of examples if set."
             )
         },
     )
@@ -141,6 +155,9 @@ class DataTrainingArguments:
     shuffle: bool = field(
         default=True, metadata={"help": "Shuffle the training data on the fly"}
     )
+    keep_in_memory: bool = field(
+        default=False, metadata={"help": "keep data in memory"}
+    )
 
 
 @dataclass
@@ -172,8 +189,20 @@ class FullTrainingArguments(TrainingArguments):
     lr_scheduler_name: str = field(
         default=None, metadata={"help": "Custom LR scheduler name (linear_warmup_exponential, linear_warmup_cosine)"}
     )
-    train_domain_weights_tmp_file: str = field(
-        default=None, metadata={"help": "Path to the temporary file for training domain weights."}
+    skip_perplexity_eval: bool = field(
+        default=False, metadata={"help": "Don't evaluate perplexity."}
     )
-
-
+    downstream_datasets: str = field(
+            default=None, metadata={"help": "Comma-delimited list of dataset names from: {trivia_qa, web_questions, lambada, natural_questions, squad_v2}"}
+    )
+    eval_all_checkpoints: bool = field(
+        default=False, metadata={"help": "Evaluate all the checkpoints at once."}
+    )
+    downstream_num_shots: Optional[int] = field(
+        default=1,
+        metadata={
+            "help": (
+                "Number of in-context examples for downstream tasks. Defaults to 1"
+            )
+        },
+    )
