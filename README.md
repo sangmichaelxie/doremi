@@ -71,7 +71,10 @@ You should run DoReMi within your own specific training setup for the best resul
 
 ## Sample run results
 Below are results from one round of DoReMi on The Pile using 120M proxy and reference models (with `scripts/run_pile.sh`). We train a 120M model using the optimized weights (`configs/pile_doremi_r1_120M_ref:pile_baseline_50kvocab_nopack_120M.json`) and compare it to the baselines (gray). The two baselines represent two slightly different ways of calculating the baseline domain weights in the Pile (nopack counts the number of examples in each domain after padding each document to the context window length, whereas pack concatenates the documents within one domain first), which produce similar-performing models. The model trained with DoReMi domain weights surpasses the baseline one-shot performance very early during training, within 50k steps (4x faster) across all tasks. The DoReMi model surpasses the baseline one-shot performance within 20k steps, has improved or comparable perplexity on 15/22 domains, and improves both uniformly averaged and worst-case perplexity across domains.
-![One-shot evaluation.](fewshot_120M_pile.png)
+
+<img src="fewshot_120M_pile.png" width="60%">
+
+## Citation
 
 If this was useful to you, please cite the [paper](https://arxiv.org/abs/2305.10429):
 ```
