@@ -4,10 +4,11 @@
 
 PyTorch implementation of DoReMi, an algorithm for optimizing data mixtures for language modeling datasets. Modern large language models are trained on many domains (web, books, arXiv, etc.), but how much of each domain to train on is unclear, especially since these models are going to be used for a variety of downstream tasks (no particular target distribution to optimize for). DoReMi tunes the data mixture to be robust to the target distribution using Distributionally Robust Optimization (DRO). DoReMi trains a small proxy model using DRO, which dynamically upweights or downweights domains based on the proxy model's excess loss compared to a pretrained reference model. The reference model provides an estimate of the best loss achievable to avoid being to pessimistic for high entropy / hard domains. The tuned data mixture can then be used to train a much larger model more efficiently. In the paper, a 280M proxy model can improve the training of a 8B parameter model (30x larger), allowing it to achieve the baseline 8B performance 2.6x faster. The graphic below provides an overview of DoReMi. Check out the [paper](https://arxiv.org/abs/2305.10429) for more details.
 
+As a black box, this codebase outputs optimized domain weights given a text dataset. Some other useful components: fast, resumable dataloader with domain-level weighted sampling, simple downstream eval harness, and HuggingFace Trainer + FlashAttention2 integration.
+
 ![High-level overview of DoReMi.](doremi.gif)
 
 ## Getting started
-
 To get started, please clone the repo and install it:
 ```
 git clone git@github.com:/sangmichaelxie/doremi.git
