@@ -21,9 +21,9 @@ export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:12288
 
 ROUND=${1-1}
 # name of the initial reference weights
-REFERENCE_WEIGHTS_NAME=${2:-"pile_baseline_50kvocab_nopack"}  
+REFERENCE_WEIGHTS_NAME=${2:-"pile_baseline_50kvocab_nopack"}
 # name of the reference model to load (can be different from reference weights in later rounds)
-REFERENCE_MODEL_NAME=${3:-"pile_baseline_50kvocab_nopack"} 
+REFERENCE_MODEL_NAME=${3:-"pile_baseline_50kvocab_nopack"}
 OTHER_ARGS=$4
 
 NAME=pile_doremi_r${ROUND}_120M_ref:${REFERENCE_WEIGHTS_NAME}_120M
@@ -47,9 +47,7 @@ accelerate launch \
     --gradient_accumulation_steps 1 \
     --dataloader_num_workers 1 \
     --max_steps 200000 \
-    --evaluation_strategy steps \
-    --eval_steps 10000 \
-    --per_device_eval_batch_size 32 \
+    --evaluation_strategy no \
     --save_strategy steps \
     --save_steps 10000 \
     --learning_rate 1e-3 \

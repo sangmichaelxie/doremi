@@ -23,7 +23,7 @@ DOMAIN_CONFIG_NAME=${1:-pile_baseline_50kvocab_nopack}
 arg=${2:-""} # set to eval to run eval
 
 if [[ "${arg}" == "eval" ]]; then
-   ADDITIONAL_ARGS="--evaluation_strategy steps --per_device_eval_batch_size 32 --do_train false --remove_unused_columns=False --downstream_datasets trivia_qa,web_questions,lambada,natural_questions,squad_v2 --eval_all_checkpoints"
+   ADDITIONAL_ARGS="--evaluation_strategy steps --per_device_eval_batch_size 32 --do_train false --remove_unused_columns=False --downstream_datasets trivia_qa,web_questions,lambada,natural_questions,squad_v2 --eval_all_checkpoints --skip_perplexity_eval"
 else
     ADDITIONAL_ARGS=""
 fi

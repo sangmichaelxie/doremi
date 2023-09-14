@@ -3,6 +3,7 @@
 source constants.sh
 
 pip install -e .
+pip uninstall -y ninja && pip install ninja
 git clone git@github.com:/HazyResearch/flash-attention
 cd ${DOREMI_DIR}/flash-attention && git checkout v2.0.4
 cd ${DOREMI_DIR}/flash-attention && rm flash_attn/models/falcon.py

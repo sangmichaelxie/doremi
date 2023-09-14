@@ -99,7 +99,7 @@ def main():
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / f"{args.config_name}.json"
 
-    if args.config_name.startswith('pile_baseline'):
+    if args.config_name.startswith('pile_baseline') and args.config_name != 'pile_baseline_256kvocab':
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
         domain_weights = compute_pile_baseline_weights(args.preprocessed_dir, args.cache_dir, nopack=args.nopack, tokenizer=tokenizer)
         config = {

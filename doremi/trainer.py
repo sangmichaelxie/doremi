@@ -262,18 +262,10 @@ class DoReMiTrainer(Trainer):
             raise ValueError(f"DoReMi optimizer {self.args.doremi_optimizer} not supported")
 
         for domain_idx in range(len(train_domain_weights)):
-            domain_mask = (domain_ids == domain_idx)
-            perdomain_scores_mask = scores_mask[domain_mask]
-            if domain_mask.sum() > 0:
-                curr_domain_excess = scores[domain_mask][perdomain_scores_mask].mean()
-            else:
-                curr_domain_excess = torch.tensor(0.0)
-
             domain_name = self.domain_list[domain_idx]
             wandb_log_dict[f'avg_domain_weights/{domain_name}'] = self.model.avg_domain_weights[domain_idx].item()
             wandb_log_dict[f'train_domain_weights/{domain_name}'] = self.model.train_domain_weights[domain_idx].item()
             wandb_log_dict[f'perdomain_scores/{domain_name}'] = self.model.perdomain_scores[domain_idx].item()
-            wandb_log_dict[f'perdomain_excess/{domain_name}'] = curr_domain_excess.float().item()
         wandb_log_dict['max_domain_id'] = domain_ids.max().item()
         wandb.log(wandb_log_dict, commit=False)
 

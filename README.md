@@ -15,7 +15,7 @@ pip install -e doremi
 cd doremi && bash scripts/setup_flash.sh
 ```
 
-All code should be run from the outermost `doremi` directory.
+The compilation in `scripts/setup_flash.sh` may take a significant amount of time (hours). All code should be run from the outermost `doremi` directory.
 Before you start, write paths to your cache directories, data directories, etc in a `constants.sh` file in the outer directory of this repo. You can also place any conda or virtualenv activation commands here. Here's an example of the contents of a `constants.sh` file (provided as a file called `sample_constants.sh`):
 ```
 #!/bin/bash
