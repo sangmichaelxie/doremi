@@ -67,7 +67,7 @@ You will also need to write a config file and save it to `configs/` and write ru
 Note that there are a few differences between this repo and the paper, which was developed at Google, namely:
 - PyTorch vs JAX
 - Subtle differences in model architecture
-- Tokenizers used (256k vocab size used in paper, while standard open source tokenizers are around 50k vocab size). This can siginificantly affect the data mixtures as calculated by token count.
+- Tokenizers used (256k vocab size used in paper, while standard open source tokenizers are around 50k vocab size). This can significantly affect the data mixtures as calculated by token count.
 You should run DoReMi within your own specific training setup for the best results.
 
 ## Sample run results
