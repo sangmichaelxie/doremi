@@ -5,18 +5,17 @@ from dataclasses import dataclass
 import torch
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 from einops import rearrange
+from flash_attn.models.gpt import GPTLMHeadModel as GPTLMHeadModelFlash
+from flash_attn.models.gpt import shard_state_dict_tp
+from flash_attn.utils.pretrained import state_dict_from_pretrained
+from flash_attn.models.opt import remap_state_dict_hf_opt
+from flash_attn.models.gptj import remap_state_dict_hf_gptj
+from flash_attn.models.gpt_neox import remap_state_dict_hf_gpt_neox
+from flash_attn.models.gpt import remap_state_dict_hf_gpt2
+from flash_attn.utils.distributed import all_gather_raw
 try:
-    from flash_attn.models.gpt import GPTLMHeadModel as GPTLMHeadModelFlash
-    from flash_attn.models.gpt import shard_state_dict_tp
     from flash_attn.losses.cross_entropy import CrossEntropyLoss
-    # from torch.nn import CrossEntropyLoss
-    from flash_attn.utils.pretrained import state_dict_from_pretrained
-    from flash_attn.models.opt import remap_state_dict_hf_opt
-    from flash_attn.models.gptj import remap_state_dict_hf_gptj
-    from flash_attn.models.gpt_neox import remap_state_dict_hf_gpt_neox
-    from flash_attn.models.gpt import remap_state_dict_hf_gpt2
     from flash_attn.ops.fused_dense import ColumnParallelLinear
-    from flash_attn.utils.distributed import all_gather_raw
 except Exception:
     from torch.nn import CrossEntropyLoss
     ColumnParallelLinear = None
