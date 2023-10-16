@@ -91,7 +91,6 @@ def main():
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-
     # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -122,12 +121,16 @@ def main():
     num_skip_examples = 0
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
+        print("training_args.output_dir")
+        print(training_args.output_dir)
         if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
             raise ValueError(
                 f"Output directory ({training_args.output_dir}) already exists and is not empty. "
                 "Use --overwrite_output_dir to overcome."
             )
         elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            print("last_checkpoint")
+            print(last_checkpoint)
             logger.info(
                 f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
@@ -298,7 +301,7 @@ def main():
             
             reference_model = model_cls.from_pretrained(
                 training_args.reference_model_name_or_path,
-                from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                # from_tf=bool(".ckpt" in model_args.model_name_or_path),
                 config=config,
                 cache_dir=model_args.cache_dir,
                 revision=model_args.model_revision,
@@ -328,7 +331,7 @@ def main():
     #     model.resize_token_embeddings(len(tokenizer))
 
     torch.cuda.empty_cache()
-
+    
     # Initialize our Trainer
     trainer = DoReMiTrainer(
         model=model,
@@ -346,7 +349,13 @@ def main():
             checkpoint = training_args.resume_from_checkpoint
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
+        print('-'*30)
+        print(checkpoint,flush=True)
+        print('-'*30)
+        print("beigin trainer.train",flush=True)
+        
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        print("finished trainer.train",flush=True)
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics
@@ -396,4 +405,8 @@ def _mp_fn(index):
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    manager = multiprocessing.Manager()
+    manager.shutdown()
+    del manager
     main()

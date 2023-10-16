@@ -305,6 +305,7 @@ class DoReMiTrainer(Trainer):
             return loss_mb.reduce_mean().detach().to(self.args.device)
 
         if self.args.reweight_domains:
+            # import pdb; pdb.set_trace()
             with self.compute_loss_context_manager():
                 loss, pertoken_loss, reference_pertoken_loss, token_mask = self.compute_loss(model, inputs, return_pertoken_losses=True)
                 excess_loss = pertoken_loss - reference_pertoken_loss

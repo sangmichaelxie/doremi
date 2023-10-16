@@ -36,6 +36,7 @@ class GPTFlashAttnLMHeadModel(GPTLMHeadModelFlash):
         self.loss_fct = CrossEntropyLoss(reduction='mean', ignore_index=self.ignore_index)
         self.pertoken_loss_fct = CrossEntropyLoss(reduction='none', ignore_index=self.ignore_index)
         self.reference_model = None
+        self._keys_to_ignore_on_save = []
 
     def forward(
         self,

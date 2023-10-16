@@ -115,6 +115,7 @@ def main():
             "attention_mask": Sequence(Value("bool")),
             "domain_id": Value("int64"),
         })
+    # import pdb;pdb.set_trace()
     processed_ds = Dataset.from_generator(data_generator, features=features)
 
     # save dataset
@@ -130,4 +131,5 @@ def main():
 
 
 if __name__ == '__main__':
+    
     main()

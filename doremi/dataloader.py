@@ -127,6 +127,8 @@ def determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_na
         raise ValueError("If num_skip_examples > 0 then domain_weights, domain_names, and seed must not be None")
 
     rng = np.random.default_rng(seed)
+    print('num_skip_examples')
+    print(num_skip_examples)
     skip_per_domain = simulate_data_skip_per_domain(num_skip_examples, domain_weights, rng)
     domain_name_to_skip_num = {name: num for name, num in zip(domain_names, skip_per_domain)}
     return domain_name_to_skip_num
@@ -182,6 +184,9 @@ def get_pile_datasets(
         shard_reversal=False):
 
     domain_name_to_skip_num = determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_names)
+
+    print("domain_name_to_skip_num")
+    print(domain_name_to_skip_num)
 
     preprocessed_dir = Path(preprocessed_dir) / split
 

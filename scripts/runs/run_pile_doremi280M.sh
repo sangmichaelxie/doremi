@@ -15,10 +15,16 @@ export HF_DATASETS_IN_MEMORY_MAX_SIZE=0
 export TORCH_EXTENSIONS_DIR=$CACHE
 export TMPDIR=$CACHE
 export WANDB_DIR=${CACHE}/wandb
+export NCCL_IBEXT_DISABLE=1
+export PDSH_RCMD_TYPE=ssh
+export NCCL_IB_DISABLE=1
+export NCCL_P2P_DISABLE=1
+export NCCL_SOCKET_IFNAME=br0 
+export NCCL_DEBUG=INFO
 
 
 PREPROCESSED_DATA=${PREPROCESSED_PILE_DIR}
-PREPROCESSED_CACHE=${CACHE}/preprocessed_cache/perdomain_pile_preprocessed
+PREPROCESSED_CACHE=${DOREMI_DIR}/preprocessed/
 
 if [ ! -d "${PREPROCESSED_CACHE}" ]; then
     mkdir -p ${CACHE}/preprocessed_cache
@@ -45,7 +51,7 @@ accelerate launch \
     --per_device_train_batch_size 64 \
     --gradient_accumulation_steps 1 \
     --dataloader_num_workers 1 \
-    --max_steps 200000 \
+    --max_steps 50000 \
     --evaluation_strategy no \
     --save_strategy steps \
     --save_steps 10000 \

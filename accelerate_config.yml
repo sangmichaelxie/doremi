@@ -1,9 +1,11 @@
 compute_environment: LOCAL_MACHINE
-distributed_type: MULTI_GPU
+distributed_type: DEEPSPEED
+deepspeed_config:
+  deepspeed_config_file: /home/jzhanggr/LMFlow_0829/LMFlow/configs/ds_config_zero3.json
+  zero3_init_flag: true
 downcast_bf16: 'no'
 dynamo_config:
   dynamo_backend: INDUCTOR
-gpu_ids: all
 machine_rank: 0
 main_training_function: main
 mixed_precision: fp16

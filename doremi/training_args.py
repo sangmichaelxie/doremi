@@ -142,7 +142,6 @@ class DataTrainingArguments:
         default=True, metadata={"help": "Shuffle the training data on the fly"}
     )
 
-
 @dataclass
 class FullTrainingArguments(TrainingArguments):
     domain_config_path: str = field(

@@ -164,5 +164,14 @@ wandb/
 logs/
 *__pycache__/
 constants.sh
-flash-attention
+flash-attention*
 ./run_*
+cache*
+model_output_dir*
+preprocessed*
+Embeddings
+Clustering*
+jsonl*
+*zip
+transformers*
+output_dir*
