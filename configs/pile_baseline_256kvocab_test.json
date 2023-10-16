@@ -1,0 +1,36 @@
+{
+    "train_domain_weights": {
+        "USPTO Backgrounds": 0.0420,
+        "NIH ExPorter": 0.0052,
+        "Wikipedia (en)": 0.0919,
+        "YoutubeSubtitles": 0.0042,
+        "HackerNews": 0.0075,
+        "StackExchange": 0.0929,
+        "Enron Emails": 0.0030,
+        "DM Mathematics": 0.0198,
+        "OpenSubtitles": 0.0124,
+        "BookCorpus2": 0.0044,
+        "Ubuntu IRC": 0.0074,
+        "PhilPapers": 0.0027,
+        "PubMed Abstracts": 0.0845,
+        "EuroParl": 0.0043,
+        "Gutenberg (PG-19)": 0.0199
+    },
+    "eval_domain_weights": {
+        "USPTO Backgrounds": 0.0420,
+        "NIH ExPorter": 0.0052,
+        "Wikipedia (en)": 0.0919,
+        "YoutubeSubtitles": 0.0042,
+        "HackerNews": 0.0075,
+        "StackExchange": 0.0929,
+        "Enron Emails": 0.0030,
+        "DM Mathematics": 0.0198,
+        "OpenSubtitles": 0.0124,
+        "BookCorpus2": 0.0044,
+        "Ubuntu IRC": 0.0074,
+        "PhilPapers": 0.0027,
+        "PubMed Abstracts": 0.0845,
+        "EuroParl": 0.0043,
+        "Gutenberg (PG-19)": 0.0199
+    }
+}
