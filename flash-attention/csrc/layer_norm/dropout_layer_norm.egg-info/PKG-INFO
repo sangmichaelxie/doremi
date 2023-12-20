@@ -1,0 +1,4 @@
+Metadata-Version: 2.1
+Name: dropout-layer-norm
+Version: 0.1
+Summary: Fused dropout + add + layer norm

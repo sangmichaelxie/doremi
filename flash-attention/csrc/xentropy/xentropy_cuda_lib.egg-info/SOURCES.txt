@@ -1,0 +1,8 @@
+README.md
+interface.cpp
+setup.py
+xentropy_kernel.cu
+xentropy_cuda_lib.egg-info/PKG-INFO
+xentropy_cuda_lib.egg-info/SOURCES.txt
+xentropy_cuda_lib.egg-info/dependency_links.txt
+xentropy_cuda_lib.egg-info/top_level.txt
